@@ -45,6 +45,15 @@ Feedback can be submitted with a button label or typed text such as
 explicit label from typed feedback, rejects conflicting labels, and leaves
 unclear text as uncertain so it cannot affect model training.
 
+Example feedback request after a scan:
+
+```powershell
+curl -X POST http://localhost:8000/api/feedback `
+  -H "Authorization: Bearer <access-token>" `
+  -H "Content-Type: application/json" `
+  -d '{\"scan_url\":\"https://example.com\",\"predicted_verdict\":\"phishing\",\"feedback_text\":\"it is actually legitimate\"}'
+```
+
 The live adaptive threshold is intentionally conservative. Threshold
 calibration should use held-out predictions, not training-set predictions:
 
