@@ -47,3 +47,7 @@ endpoint to private network ranges.
 
 The preflight intentionally does not send an email or print credentials. It
 only authenticates to SMTP and runs `SELECT 1` against PostgreSQL.
+
+For local development, use the SQLite fallback and the Vite/FastAPI commands
+from the backend and frontend READMEs instead of exposing the deployment
+gateway to the public internet.
