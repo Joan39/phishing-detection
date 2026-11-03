@@ -3,6 +3,8 @@ __pycache__/
 .env
 *.secret
 results/*.db
+results/**/*.json
+results/*.jsonl
 frontend/node_modules/
 frontend/dist/
 models/
