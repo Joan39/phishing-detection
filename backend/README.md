@@ -40,6 +40,11 @@ analyst labels in `results/feedback.jsonl`, updates the adaptive threshold in
 dataset plus all non-uncertain feedback. Retraining is synchronous and should
 be moved to a job queue before production deployment.
 
+Feedback can be submitted with a button label or typed text such as
+`"it is actually phishing"` or `"this is legitimate"`. The API extracts an
+explicit label from typed feedback, rejects conflicting labels, and leaves
+unclear text as uncertain so it cannot affect model training.
+
 The live adaptive threshold is intentionally conservative. Threshold
 calibration should use held-out predictions, not training-set predictions:
 
