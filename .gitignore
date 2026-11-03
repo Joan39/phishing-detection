@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.env
+*.secret
+results/*.db
+frontend/node_modules/
+frontend/dist/
+models/
+original/
+processed/
+reports/
+*.log
