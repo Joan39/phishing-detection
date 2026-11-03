@@ -1,0 +1,74 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://qphish:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/qphish
+    volumes:
+      - qphish-data:/app/data
+      - ./models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./deploy/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - "80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    expose:
+      - "9090"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: qphish
+      POSTGRES_USER: qphish
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qphish -d qphish"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    depends_on:
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  qphish-data:
+  prometheus-data:
+  postgres-data:
