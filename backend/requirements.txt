@@ -1,0 +1,11 @@
+numpy>=2.0
+pandas>=3.0
+scikit-learn>=1.5
+joblib>=1.4
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.8
+prometheus-client>=0.20
+qiskit>=1.0
+qiskit-machine-learning>=0.8
+psycopg[binary]>=3.2
