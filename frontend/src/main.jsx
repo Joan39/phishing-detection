@@ -286,6 +286,39 @@ function AnalysisReport({ result, comparison }) {
   const score = result ? Math.round(result.probability * 100) : null;
   const reportModels = comparison?.models?.filter((model) => model.id !== "quantum-ensemble") || [];
   const modelNames = { A: "Logistic regression", B: "Soft-voting ensemble", quantum: "Quantum VQC", hybrid: "Hybrid live score" };
+  const explanations = result?.explanations || {};
+  const signals = result ? [
+    {
+      label: "Secure connection",
+      detail: explanations.uses_https ? "The URL uses HTTPS." : "The URL does not use HTTPS.",
+      tone: explanations.uses_https ? "positive" : "warning",
+    },
+    {
+      label: "Domain format",
+      detail: explanations.is_domain_ip ? "The host is an IP address, which is a phishing warning sign." : "The host uses a named domain.",
+      tone: explanations.is_domain_ip ? "warning" : "positive",
+    },
+    {
+      label: "URL obfuscation",
+      detail: explanations.has_obfuscation ? "Obfuscation patterns were found in the URL." : "No obvious obfuscation pattern was found.",
+      tone: explanations.has_obfuscation ? "warning" : "positive",
+    },
+    {
+      label: "URL structure",
+      detail: `${explanations.url_length ?? "Unknown"} characters and ${explanations.subdomain_count ?? "unknown"} subdomains were detected.`,
+      tone: (explanations.url_length > 120 || explanations.subdomain_count > 2) ? "warning" : "neutral",
+    },
+    {
+      label: "Special characters",
+      detail: `${explanations.special_character_count ?? "Unknown"} unusual special characters were detected.`,
+      tone: explanations.special_character_count > 0 ? "warning" : "positive",
+    },
+    {
+      label: "Trusted-domain safeguard",
+      detail: explanations.trusted_domain_calibration ? "A safe-root-domain calibration reduced the final probability." : "No trusted-domain calibration was applied.",
+      tone: explanations.trusted_domain_calibration ? "positive" : "neutral",
+    },
+  ] : [];
   return (
     <section className="report-card panel">
       <div className="panel-heading"><div><p className="eyebrow">ANALYSIS REPORT</p><h2>Threat assessment</h2></div><span className="report-badge">LIVE</span></div>
@@ -296,6 +329,23 @@ function AnalysisReport({ result, comparison }) {
           <div className="risk-score"><div><span>Overall threat risk</span><strong>{score}%</strong></div><div className="risk-track"><i style={{ width: `${score}%` }} /></div></div>
           <div className="model-score-grid">
             {Object.entries(result.model_scores || {}).map(([id, value]) => <div className="model-score" key={id}><span>{modelNames[id] || id}</span><strong>{Math.round(value * 100)}%</strong><i style={{ width: `${Math.round(value * 100)}%` }} /></div>)}
+          </div>
+          <div className="explanation-panel">
+            <div className="report-section-label">Why this classification?</div>
+            <p className="explanation-summary">
+              The final score is <strong>{score}%</strong>. The backend compares it with the
+              <strong> {Math.round((result.decision_threshold || 0) * 100)}% decision threshold</strong>,
+              then returns <strong>{result.verdict === "phishing" ? "phishing" : "legitimate"}</strong>.
+              The score combines the saved classical models and Quantum VQC probability.
+            </p>
+            <div className="explanation-signals">
+              {signals.map((signal) => (
+                <div className={`explanation-signal ${signal.tone}`} key={signal.label}>
+                  <span className="signal-icon">{signal.tone === "warning" ? "!" : signal.tone === "positive" ? "✓" : "•"}</span>
+                  <div><strong>{signal.label}</strong><p>{signal.detail}</p></div>
+                </div>
+              ))}
+            </div>
           </div>
           <div className="report-section-label">Benchmark performance</div>
           <div className="benchmark-grid">{reportModels.map((model) => <div className="benchmark-card" key={model.id}><span>{model.name}</span><strong>{Math.round((model.metrics.accuracy || 0) * 100)}%</strong><small>accuracy</small></div>)}</div>
