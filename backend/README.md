@@ -69,3 +69,20 @@ metrics = evaluate_threshold(probabilities, labels, threshold)
 
 The selected threshold removes false positives observed in the validation
 sample, but cannot guarantee perfect classification for unseen URLs.
+
+## Shared three-way evaluation
+
+To compare Logistic Regression, the Soft-Voting Ensemble, Quantum VQC, and
+the Hybrid model fairly, run:
+
+```powershell
+python -m backend.three_way_evaluation `
+  --output results/three_way_evaluation.json
+```
+
+This creates three domain-disjoint partitions: training, validation, and
+test. The validation partition selects the hybrid quantum weight and decision
+threshold; the test partition is evaluated once for the final comparison.
+All four configurations use the same sampled validation and test examples.
+The output records row counts, domain counts, overlap checks, model metrics,
+fit times, circuit settings, and a full-test-partition ensemble reference.
