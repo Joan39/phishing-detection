@@ -86,3 +86,11 @@ threshold; the test partition is evaluated once for the final comparison.
 All four configurations use the same sampled validation and test examples.
 The output records row counts, domain counts, overlap checks, model metrics,
 fit times, circuit settings, and a full-test-partition ensemble reference.
+
+The quantum component uses a stronger default research configuration than the
+original smoke experiment: 1,000 training examples per class, two circuit
+repetitions, 60 COBYLA iterations, and 512 sampler shots. These settings
+increase data exposure, circuit capacity, optimization budget, and sampling
+stability. They increase runtime and do not guarantee a quantum advantage.
+Use `--quantum-train-per-class`, `--circuit-reps`, `--maxiter`, and `--shots`
+to run controlled ablations.
