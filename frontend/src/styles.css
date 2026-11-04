@@ -38,3 +38,15 @@ label { display: block; color: #c8d4e0; font-size: 13px; font-weight: 600; margi
 .feedback-panel input { margin: 0 0 10px; }
 .feedback-submit { padding: 10px 14px; font-size: 12px; }
 .feedback-status { margin: 12px 0 0; color: #6ce9e2; font-size: 12px; line-height: 1.5; }
+.explanation-panel { margin-top: 18px; padding-top: 16px; border-top: 1px solid #20344b; }
+.explanation-summary { margin: 8px 0 14px; color: #9fb0c1; font-size: 12px; line-height: 1.6; }
+.explanation-summary strong { color: #e8f2f8; }
+.explanation-signals { display: grid; gap: 8px; }
+.explanation-signal { display: flex; gap: 9px; align-items: flex-start; padding: 9px 10px; border: 1px solid #263d54; border-radius: 8px; background: #0d1a29; }
+.explanation-signal .signal-icon { display: grid; place-items: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; font-size: 11px; font-weight: 700; }
+.explanation-signal strong { display: block; color: #dce8f1; font-size: 11px; }
+.explanation-signal p { margin: 3px 0 0; color: #91a4b7; font-size: 11px; line-height: 1.4; }
+.explanation-signal.warning { border-color: #70404b; background: #281c29; }
+.explanation-signal.warning .signal-icon { color: #ffb0ac; background: #6b303d; }
+.explanation-signal.positive .signal-icon { color: #9af0d2; background: #1c5d54; }
+.explanation-signal.neutral .signal-icon { color: #b7c8d8; background: #294054; }
