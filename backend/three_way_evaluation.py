@@ -32,6 +32,11 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.preprocessing import MinMaxScaler
 
 from .quantum_experiment import QUANTUM_FEATURES, balanced_sample
+from .quantum_live import (
+    QUANTUM_CIRCUIT_REPS,
+    QUANTUM_DEFAULT_MAXITER,
+    QUANTUM_DEFAULT_SHOTS,
+)
 from .train_models import (
     DEFAULT_DATASET,
     build_feature_frame,
@@ -55,10 +60,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-fold", type=int, default=0, choices=range(4))
     parser.add_argument("--validation-per-class", type=int, default=250)
     parser.add_argument("--test-per-class", type=int, default=250)
+    parser.add_argument(
+        "--quantum-train-per-class",
+        type=int,
+        default=1000,
+        help="Balanced quantum training rows per class from training domains.",
+    )
     parser.add_argument("--trees", type=int, default=100)
     parser.add_argument("--boosting-iterations", type=int, default=100)
-    parser.add_argument("--maxiter", type=int, default=30)
-    parser.add_argument("--shots", type=int, default=256)
+    parser.add_argument("--maxiter", type=int, default=QUANTUM_DEFAULT_MAXITER)
+    parser.add_argument("--shots", type=int, default=QUANTUM_DEFAULT_SHOTS)
+    parser.add_argument("--circuit-reps", type=int, default=QUANTUM_CIRCUIT_REPS)
     parser.add_argument("--quantum-weight", type=float, default=None)
     parser.add_argument("--threshold", type=float, default=None)
     return parser.parse_args()
@@ -192,7 +204,7 @@ def main() -> None:
     q_train = balanced_sample(
         inner_train,
         outer_train_target,
-        max(args.validation_per_class * 2, 500),
+        args.quantum_train_per_class,
         args.seed + 4,
     )
     x_q_train = scaler.fit_transform(
@@ -206,12 +218,12 @@ def main() -> None:
     classifier = VQC(
         feature_map=zz_feature_map(
             feature_dimension=len(QUANTUM_FEATURES),
-            reps=1,
+            reps=args.circuit_reps,
             entanglement="linear",
         ),
         ansatz=real_amplitudes(
             num_qubits=len(QUANTUM_FEATURES),
-            reps=1,
+            reps=args.circuit_reps,
             entanglement="linear",
         ),
         optimizer=COBYLA(maxiter=args.maxiter),
@@ -304,6 +316,7 @@ def main() -> None:
             "feature_map": "ZZFeatureMap",
             "ansatz": "RealAmplitudes",
             "qubits": len(QUANTUM_FEATURES),
+            "reps": args.circuit_reps,
             "optimizer": "COBYLA",
             "maxiter": args.maxiter,
             "sampler": "StatevectorSampler",

@@ -15,6 +15,31 @@ QUANTUM_FEATURES = [
     "NoOfSubDomain",
     "SpacialCharRatioInURL",
 ]
+QUANTUM_CIRCUIT_REPS = 2
+QUANTUM_DEFAULT_MAXITER = 60
+QUANTUM_DEFAULT_SHOTS = 512
+
+
+def _build_classifier(*, maxiter: int, shots: int, seed: int, reps: int):
+    from qiskit.circuit.library import real_amplitudes, zz_feature_map
+    from qiskit.primitives import StatevectorSampler
+    from qiskit_machine_learning.algorithms import VQC
+    from qiskit_machine_learning.optimizers import COBYLA
+
+    return VQC(
+        feature_map=zz_feature_map(
+            feature_dimension=len(QUANTUM_FEATURES),
+            reps=reps,
+            entanglement="linear",
+        ),
+        ansatz=real_amplitudes(
+            num_qubits=len(QUANTUM_FEATURES),
+            reps=reps,
+            entanglement="linear",
+        ),
+        optimizer=COBYLA(maxiter=maxiter),
+        sampler=StatevectorSampler(default_shots=shots, seed=seed),
+    )
 
 
 def train_quantum_model(
@@ -23,16 +48,12 @@ def train_quantum_model(
     *,
     seed: int = 42,
     fold: int = 0,
-    train_per_class: int = 500,
-    maxiter: int = 30,
-    shots: int = 256,
+    train_per_class: int = 1000,
+    maxiter: int = QUANTUM_DEFAULT_MAXITER,
+    shots: int = QUANTUM_DEFAULT_SHOTS,
     feedback_urls: list[str] | None = None,
     feedback_targets: list[int] | None = None,
 ) -> None:
-    from qiskit.circuit.library import real_amplitudes, zz_feature_map
-    from qiskit.primitives import StatevectorSampler
-    from qiskit_machine_learning.algorithms import VQC
-    from qiskit_machine_learning.optimizers import COBYLA
     from sklearn.model_selection import StratifiedGroupKFold
     from sklearn.preprocessing import MinMaxScaler
 
@@ -62,19 +83,11 @@ def train_quantum_model(
             [x_train, scaler.transform(feedback_frame[QUANTUM_FEATURES])]
         )
         targets = np.concatenate([targets, np.asarray(feedback_targets, dtype=int)])
-    classifier = VQC(
-        feature_map=zz_feature_map(
-            feature_dimension=len(QUANTUM_FEATURES),
-            reps=1,
-            entanglement="linear",
-        ),
-        ansatz=real_amplitudes(
-            num_qubits=len(QUANTUM_FEATURES),
-            reps=1,
-            entanglement="linear",
-        ),
-        optimizer=COBYLA(maxiter=maxiter),
-        sampler=StatevectorSampler(default_shots=shots, seed=seed),
+    classifier = _build_classifier(
+        maxiter=maxiter,
+        shots=shots,
+        seed=seed,
+        reps=QUANTUM_CIRCUIT_REPS,
     )
     classifier.fit(x_train, targets)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +102,7 @@ def train_quantum_model(
                 "feature_map": "ZZFeatureMap",
                 "ansatz": "RealAmplitudes",
                 "qubits": len(QUANTUM_FEATURES),
+                "reps": QUANTUM_CIRCUIT_REPS,
                 "sampler": "StatevectorSampler",
                 "shots": shots,
             },
@@ -104,27 +118,12 @@ def load_quantum_model(path: Path) -> dict[str, Any]:
     model = joblib.load(path)
     if not isinstance(model, dict) or not {"scaler", "model_weights"} <= model.keys():
         raise ValueError("Quantum live model has an invalid artifact format.")
-    from qiskit.circuit.library import real_amplitudes, zz_feature_map
-    from qiskit.primitives import StatevectorSampler
-    from qiskit_machine_learning.algorithms import VQC
-    from qiskit_machine_learning.optimizers import COBYLA
-
-    classifier = VQC(
-        feature_map=zz_feature_map(
-            feature_dimension=len(QUANTUM_FEATURES),
-            reps=1,
-            entanglement="linear",
-        ),
-        ansatz=real_amplitudes(
-            num_qubits=len(QUANTUM_FEATURES),
-            reps=1,
-            entanglement="linear",
-        ),
-        optimizer=COBYLA(maxiter=1),
-        sampler=StatevectorSampler(
-            default_shots=int(model.get("circuit", {}).get("shots", 256)),
-            seed=42,
-        ),
+    circuit = model.get("circuit", {})
+    classifier = _build_classifier(
+        maxiter=1,
+        shots=int(circuit.get("shots", QUANTUM_DEFAULT_SHOTS)),
+        seed=42,
+        reps=int(circuit.get("reps", 1)),
     )
     classifier._fit_result = type(
         "FitResult", (), {"x": np.asarray(model["model_weights"])}
