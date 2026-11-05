@@ -21,10 +21,22 @@ Run any of them with `python -m backend.<name> [--output path]`.
 
 ## 2. Classical detectors (domain-held-out fold)
 
-| Model | Accuracy | Precision | Recall | F1 | ROC-AUC | FPR |
-| --- | --- | --- | --- | --- | --- | --- |
-| A — logistic regression | 0.9803 | 0.9868 | 0.9668 | 0.9767 | 0.9957 | 0.0097 |
-| B — soft-voting ensemble | 0.9953 | 0.9968 | 0.9922 | 0.9945 | 0.9982 | 0.0024 |
+Fold protocol: `GroupShuffleSplit` on domain, 10% held out (23,661 rows),
+seed 42; each model is trained on the remaining 90% of PhiUSIIL **plus the
+realistic legitimate hard-negative corpus**, then scored at the 0.5 decision
+point.
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
+| --- | --- | --- | --- | --- | --- |
+| A — logistic regression | 0.9261 | 0.9369 | 0.8825 | 0.9089 | 0.9614 |
+| B — soft-voting ensemble | 0.9909 | 0.9963 | 0.9818 | 0.9890 | 0.9967 |
+| Classical, equal average | 0.9717 | 0.9822 | 0.9495 | 0.9656 | 0.9947 |
+| **Classical, weighted (A 0.35 / B 0.65)** | **0.9884** | **0.9914** | **0.9807** | **0.9860** | **0.9959** |
+
+The weighted row is the live fusion in `backend/main.py`
+(`CLASSICAL_WEIGHTS`, overridable via `QPHISH_CLASSICAL_WEIGHTS`). Weighting
+by held-out strength adds +1.7 accuracy points over equal averaging, mainly by
+curbing model A's false positives.
 
 ## 3. Quantum component (live artifact)
 
@@ -81,7 +93,8 @@ URLs remain ≥0.97; live API scans classify both correctly.
 
 - No demonstrated quantum advantage; the VQC contributes diversity only.
 - Drift is simulated, not observed production traffic.
-- Classical feedback retraining is synchronous in the request path.
+- Feedback retraining runs in background worker threads (full production
+  budget since November 2026, so live models never silently downsize).
 - Features are URL-morphology only (no host reputation or certificate data).
 - Plain-HTTP URLs on hosts absent from the hard-negative corpus (e.g.
   `http://example.com`) still score high: dataset legitimate rows are 100%

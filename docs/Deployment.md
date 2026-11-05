@@ -39,7 +39,8 @@ The production stack lives in `docker-compose.yml` with configs in `deploy/`:
 - `models/` is mounted so feedback-driven retraining survives restarts.
 - Set the SMTP variables and `QPHISH_REQUIRE_EMAIL_VERIFICATION=true` to
   enable verification and password-reset emails.
-- Retraining is synchronous in the feedback path; move it to a job queue
-  before high-volume production use.
+- Retraining runs in background worker threads per feedback submission; for
+  high-volume production use, move it to a shared job queue so replicas do not
+  retrain independently.
 - Prometheus scrapes `/metrics` internally; the gateway blocks it from the
   public internet.

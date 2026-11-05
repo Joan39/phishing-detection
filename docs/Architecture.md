@@ -59,10 +59,13 @@ mtime/size changes, so retraining takes effect without a restart.
 - The reward updates an epsilon-greedy `ThresholdBandit`
   (`backend/adaptation_experiment.py`); state persists in
   `results/rl_state.json`.
-- Classical models retrain synchronously on the dataset plus all non-uncertain
-  feedback; the quantum model retrains in a background worker using the full
-  balanced training sample with a reduced optimizer budget
-  (`backend/quantum_live.py::adapt_live_model`).
+- Both detectors adapt in background worker threads so the feedback request
+  returns immediately: classical models retrain on the dataset plus all
+  non-uncertain feedback at full production capacity (`trees=200`,
+  `boosting_iterations=200`), and the quantum model retrains through
+  `backend/quantum_live.py::adapt_live_model`, which keeps the strengthened
+  circuit but uses a reduced optimizer budget. Each path is guarded by a flag
+  so concurrent feedback coalesces into one retrain.
 
 ## 4. Training data conventions
 

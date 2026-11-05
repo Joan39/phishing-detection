@@ -76,7 +76,7 @@ scripts/     report generator and live-model evaluation
 tests/       unit tests (features, training policy, label convention)
 docs/        user manual, architecture, API, experiments, deployment
 deploy/      Docker Compose stack, nginx gateway, Prometheus, preflight
-reports/     generated .docx experiment reports (tracked)
+reports/     generated .docx experiment reports (git-ignored)
 original/    raw dataset (git-ignored)
 models/      live detector artifacts (git-ignored)
 results/     database, experiment JSON outputs, RL state (git-ignored)

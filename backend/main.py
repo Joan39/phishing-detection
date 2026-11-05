@@ -85,10 +85,39 @@ QUANTUM_MODEL_FILE = Path(
     os.getenv("QPHISH_QUANTUM_MODEL_FILE", ROOT / "models" / "quantum_live.joblib")
 )
 QUANTUM_WEIGHT = float(os.getenv("QPHISH_QUANTUM_WEIGHT", "0.25"))
-# Ensemble weights reflect held-out performance: the soft-voting ensemble
-# dominates single-model logistic regression on every metric, so it carries
-# most of the classical probability.
-CLASSICAL_WEIGHTS = {"A": 0.35, "B": 0.65}
+
+
+def _classical_weights() -> dict[str, float]:
+    """Per-model classical weights, defaulting to the held-out performance split.
+
+    The soft-voting ensemble (B) dominates single-model logistic regression (A)
+    on every held-out metric, so it carries most of the classical probability.
+    Set ``QPHISH_CLASSICAL_WEIGHTS`` to an empty value to fuse every available
+    model equally, or override the split explicitly, e.g. ``A=0.35,B=0.65``.
+    """
+    configured = os.getenv("QPHISH_CLASSICAL_WEIGHTS")
+    if configured is None:
+        return {"A": 0.35, "B": 0.65}
+    if not configured.strip():
+        return {}
+    weights: dict[str, float] = {}
+    for part in configured.split(","):
+        name, _, raw = part.partition("=")
+        try:
+            value = float(raw)
+        except ValueError:
+            raise ValueError(
+                "QPHISH_CLASSICAL_WEIGHTS must look like 'A=0.35,B=0.65'."
+            ) from None
+        if value < 0:
+            raise ValueError("QPHISH_CLASSICAL_WEIGHTS values must be non-negative.")
+        weights[name.strip().upper()] = value
+    if not weights or sum(weights.values()) <= 0:
+        raise ValueError("QPHISH_CLASSICAL_WEIGHTS must set at least one positive weight.")
+    return weights
+
+
+CLASSICAL_WEIGHTS = _classical_weights()
 MODEL_LOCK = threading.Lock()
 ADAPTATION_LOCK = threading.Lock()
 ADAPTATION_RUNNING = False
@@ -652,7 +681,7 @@ def _retrain_from_feedback(records: list[dict]) -> int:
     y_train = pd.concat([target, feedback_target], ignore_index=True)
     models = {
         "A": make_baseline(42),
-        "B": make_ensemble(42, trees=100, boosting_iterations=100),
+        "B": make_ensemble(42, trees=200, boosting_iterations=200),
     }
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     for name, model in models.items():
@@ -821,6 +850,7 @@ def metrics(user: sqlite3.Row = Depends(_current_user)) -> dict[str, object]:
         "scans": dict(totals),
         "feedback": dict(feedback_totals),
         "quantum_weight": QUANTUM_WEIGHT,
+        "classical_weights": CLASSICAL_WEIGHTS,
         "adaptive_threshold": _active_threshold(_load_rl_state()),
     }
 
@@ -1104,7 +1134,7 @@ def feedback(
     return {
         "accepted": True,
         "message": (
-            "Feedback accepted and models retrained."
+            "Feedback accepted; models are retraining in the background."
             if trained_labels
             else "Feedback accepted; uncertain labels are not used for training."
         ),

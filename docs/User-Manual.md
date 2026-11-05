@@ -93,9 +93,9 @@ What happens next:
 - Your label is stored in the feedback log.
 - A reinforcement-learning bandit adjusts the **decision threshold** (between
   0.30 and 0.70) so future scans score better against analyst truth.
-- The classical models are retrained with your labeled example mixed into the
-  dataset, and the quantum model is retrained in the background. Retraining
-  can take a minute or two; the app stays usable.
+- Both the classical models (your labeled example mixed into the dataset) and
+  the quantum model are retrained in the background. Retraining can take a
+  minute or two; the app stays usable.
 
 **Not sure** feedback is recorded but never changes model training.
 
