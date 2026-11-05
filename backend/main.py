@@ -555,28 +555,31 @@ class PasswordResetRequest(BaseModel):
 
 
 def _load_rl_state() -> dict:
+    # Same action set the quantum x RL matrix experiment validated: drift
+    # fairness drove the bandit to 0.30 in 15 of 16 batches, so the live
+    # policy must be able to reach it.
+    default_actions = [0.30, 0.40, 0.50, 0.60, 0.70]
     if not RL_STATE_FILE.exists():
-        return {
-            "thresholds": [0.4, 0.5, 0.6, 0.7, 0.8],
-            "q_values": [0.0, 0.0, 0.0, 0.0, 0.2],
-        }
-    try:
-        state = json.loads(RL_STATE_FILE.read_text(encoding="utf-8"))
-        if len(state["thresholds"]) != len(state["q_values"]):
-            raise ValueError("threshold and q-value lengths differ")
-        if not state["thresholds"] or not all(
-            0.0 <= float(value) <= 1.0 for value in state["thresholds"]
-        ):
-            raise ValueError("thresholds must be non-empty probabilities")
-        if all(float(value) == 0.0 for value in state["q_values"]):
-            midpoint = int(np.argmin(np.abs(np.asarray(state["thresholds"]) - 0.5)))
-            state["q_values"][midpoint] = 0.2
-        return state
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Adaptive-learning state is invalid.",
-        ) from exc
+        state = {"thresholds": default_actions, "q_values": [0.0] * len(default_actions)}
+    else:
+        try:
+            state = json.loads(RL_STATE_FILE.read_text(encoding="utf-8"))
+            if len(state["thresholds"]) != len(state["q_values"]):
+                raise ValueError("threshold and q-value lengths differ")
+            if not state["thresholds"] or not all(
+                0.0 <= float(value) <= 1.0 for value in state["thresholds"]
+            ):
+                raise ValueError("thresholds must be non-empty probabilities")
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Adaptive-learning state is invalid.",
+            ) from exc
+    if all(float(value) == 0.0 for value in state["q_values"]):
+        # Cold start: prefer the action closest to the neutral 0.50 threshold.
+        midpoint = int(np.argmin(np.abs(np.asarray(state["thresholds"]) - 0.5)))
+        state["q_values"][midpoint] = 0.2
+    return state
 
 
 def _save_rl_state(state: dict) -> None:
