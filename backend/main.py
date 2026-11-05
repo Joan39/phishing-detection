@@ -85,6 +85,10 @@ QUANTUM_MODEL_FILE = Path(
     os.getenv("QPHISH_QUANTUM_MODEL_FILE", ROOT / "models" / "quantum_live.joblib")
 )
 QUANTUM_WEIGHT = float(os.getenv("QPHISH_QUANTUM_WEIGHT", "0.25"))
+# Ensemble weights reflect held-out performance: the soft-voting ensemble
+# dominates single-model logistic regression on every metric, so it carries
+# most of the classical probability.
+CLASSICAL_WEIGHTS = {"A": 0.35, "B": 0.65}
 MODEL_LOCK = threading.Lock()
 ADAPTATION_LOCK = threading.Lock()
 ADAPTATION_RUNNING = False
@@ -1124,7 +1128,11 @@ def scan(
         name: float(model.predict_proba(features)[:, 1][0])
         for name, model in models.items()
     }
-    classical_probability = sum(model_scores.values()) / len(model_scores)
+    weight_total = sum(CLASSICAL_WEIGHTS.get(name, 1.0) for name in model_scores)
+    classical_probability = sum(
+        CLASSICAL_WEIGHTS.get(name, 1.0) * score
+        for name, score in model_scores.items()
+    ) / weight_total
     quantum_probability = predict_quantum_probability(quantum_model, features)
     probability = (
         (1 - QUANTUM_WEIGHT) * classical_probability

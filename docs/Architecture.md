@@ -30,7 +30,8 @@ For `POST /api/scans`:
 2. **Classical models** (`models/url/model_A.joblib`, `model_B.joblib`) —
    A: logistic-regression pipeline; B: soft-voting ensemble (logistic
    regression + random forest + gradient boosting). Their probabilities are
-   averaged.
+   combined with `CLASSICAL_WEIGHTS` (`A: 0.35`, `B: 0.65`), because B is
+   markedly more accurate on held-out domains (see Experiments and Results).
 3. **Quantum model** (`models/quantum_live.joblib`) — a 4-qubit variational
    quantum classifier (`ZZFeatureMap` + `RealAmplitudes`, 2 repetitions,
    StatevectorSampler, 512 shots, COBYLA 60 iterations) scored on four

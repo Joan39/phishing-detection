@@ -83,3 +83,8 @@ URLs remain ≥0.97; live API scans classify both correctly.
 - Drift is simulated, not observed production traffic.
 - Classical feedback retraining is synchronous in the request path.
 - Features are URL-morphology only (no host reputation or certificate data).
+- Plain-HTTP URLs on hosts absent from the hard-negative corpus (e.g.
+  `http://example.com`) still score high: dataset legitimate rows are 100%
+  HTTPS, so HTTP is a genuine learned signal, not only an artifact. A wider
+  HTTP negative corpus was tried and raised classical false-positive rates
+  (A 0.12 → 0.31), so it was reverted; weighted fusion is the mitigation.
