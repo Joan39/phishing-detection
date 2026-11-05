@@ -41,7 +41,7 @@ from .quantum_live import (
     adapt_live_model,
     predict_quantum_probability,
 )
-from .url_features import extract_url_features
+from .url_features import OTHER_SPECIAL_CHARACTERS, extract_url_features
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -972,7 +972,6 @@ def reset_password(request: PasswordResetRequest) -> dict[str, bool]:
 def model_comparison() -> dict:
     first = _load_json_result("first_experiment.json")
     quantum = _load_json_result("quantum_ensemble_experiment.json")
-    combined = _optional_json_result("combined_experiment.json")
     metrics = first.get("metrics", {})
     response = {
         "models": [
@@ -1002,25 +1001,7 @@ def model_comparison() -> dict:
                 "evaluation_only": False,
             },
         ],
-        "final_risk_score": {
-            "live_model": "A+B ensemble",
-            "quantum_included": False,
-            "reason": "Quantum results are evaluation-only until a live quantum inference service is configured.",
-        },
     }
-    if combined is not None:
-        response["combined_experiment"] = {
-            "fused_metrics": combined.get("fused_metrics", {}),
-            "component_metrics": combined.get("component_metrics", {}),
-            "static_drift_threshold_metrics": combined.get(
-                "static_drift_threshold_metrics", {}
-            ),
-            "adaptive_drift_threshold_metrics": combined.get(
-                "adaptive_drift_threshold_metrics", {}
-            ),
-            "comparisons": combined.get("comparisons", {}),
-            "rl": combined.get("rl", {}),
-        }
     matrix = _optional_json_result("quantum_rl_configuration_experiment.json")
     if matrix is not None:
         response["configuration_matrix"] = {
@@ -1153,7 +1134,13 @@ def scan(
         is_trusted_domain_url(request.url)
         and not bool(features["IsDomainIP"].iloc[0])
         and not bool(features["HasObfuscation"].iloc[0])
-        and int(features["NoOfOtherSpecialCharsInURL"].iloc[0]) == 0
+        # Fragments are never sent to the server, so only pre-fragment
+        # special characters disqualify a trusted host from calibration.
+        and sum(
+            character in OTHER_SPECIAL_CHARACTERS
+            for character in request.url.split("#", 1)[0]
+        )
+        == 0
         and int(features["NoOfSubDomain"].iloc[0]) <= 2
     )
     if trusted_domain_calibration:

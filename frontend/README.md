@@ -1,12 +1,12 @@
 # QPhish frontend
 
-Install dependencies and start the development server from the project root:
+React 19 + Vite single-page workspace.
 
-```powershell
+```bash
 npm --prefix frontend install
-npm --prefix frontend run dev
+npm --prefix frontend run dev      # http://localhost:5173
 ```
 
-The frontend uses `VITE_API_BASE_URL` when it is set. Otherwise it connects to
-`http://localhost:8000`. Sign in to the API before scanning URLs or submitting
-feedback.
+Connects to `http://localhost:8000` unless `VITE_API_BASE_URL` is set.
+See [docs/Development-Setup.md](../docs/Development-Setup.md) and the
+[User Manual](../docs/User-Manual.md).
