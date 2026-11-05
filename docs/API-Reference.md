@@ -70,8 +70,8 @@ record, the trained-label count, the new adaptive threshold, and the reward.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/models/comparison` | Saved experiment metrics for models A, B and the hybrid ensemble, the live fusion description, and (when present) the quantum × RL configuration matrix. |
-| GET | `/api/metrics` | Per-user counters: scans total/phishing, average probability, feedback total/reward, adaptive threshold, quantum weight. |
+| GET | `/api/models/comparison` | Saved experiment metrics for models A, B and the hybrid ensemble, the live fusion configuration (quantum weight, classical split, decision threshold), and (when present) the quantum × RL configuration matrix. |
+| GET | `/api/metrics` | Per-user counters: scans total/phishing, average probability, feedback total/reward, adaptive threshold, quantum weight, classical weights. |
 | GET | `/api/health` | Public health probe: engine availability, database, global counters. |
 | GET | `/metrics` | Prometheus exposition (internal traffic only in deployment). |
 
