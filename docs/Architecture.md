@@ -23,10 +23,11 @@ browser.
 For `POST /api/scans`:
 
 1. **Feature extraction** (`backend/url_features.py`) — 19 raw-URL features:
-   length, letter/digit ratios, hyphen/underscore counts, subdomain depth,
-   host/domain length, TLD length, `@`/`=`/`?`/`&` counts, unusual special
-   characters, obfuscation tokens (`%XX`), HTTPS flag, IP-host flag, and a
-   trusted-root flag.
+   URL/domain/TLD lengths, subdomain depth, IP-host and HTTPS flags,
+   trusted-root flag, percent-encoding obfuscation counts and ratio,
+   letter/digit counts and ratios, `=`/`?`/`&` counts, and other special
+   character counts and ratio. For a plain-language explanation of what each
+   model learns from these features, see [How Detection Works](How-Detection-Works.md).
 2. **Classical models** (`models/url/model_A.joblib`, `model_B.joblib`) —
    A: logistic-regression pipeline; B: soft-voting ensemble (logistic
    regression + random forest + gradient boosting). Their probabilities are

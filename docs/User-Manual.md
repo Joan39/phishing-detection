@@ -62,6 +62,10 @@ The right-hand panel explains the result in detail:
   unusual special characters, and trusted-domain calibration.
 - **Benchmark performance** — held-out accuracy of the classical models.
 
+For a full explanation of how each model reaches its probability — the URL
+features, the classical detectors, the quantum circuit, the hybrid blend and
+the adaptive threshold — see [How Detection Works](How-Detection-Works.md).
+
 Trusted brands (Google, Wikipedia, GitHub, Apple, Amazon, Microsoft, YouTube)
 get a bounded calibration: clean URLs on those domains have their probability
 capped so ordinary site pages are not flagged. Lookalike domains such as

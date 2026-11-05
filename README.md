@@ -50,9 +50,9 @@ Train the live detectors with `python -m backend.train_models` and
 
 ## Documentation
 
-All guides live in [docs/](docs/README.md): user manual, architecture,
-API reference, development setup, experiments and results, deployment.
-The consolidated Word report is regenerated with
+All guides live in [docs/](docs/README.md): user manual, how detection works,
+architecture, API reference, development setup, experiments and results,
+deployment. The consolidated Word report is regenerated with
 `python scripts/generate_system_report.py`.
 
 ## Repository layout
