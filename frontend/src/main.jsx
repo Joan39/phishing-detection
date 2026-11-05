@@ -154,8 +154,12 @@ function Dashboard({ user, onSignOut }) {
       .then(setComparison)
       .catch(() => setComparison(null));
     apiRequest("/api/scans/history").then(setHistory).catch(() => setHistory([]));
-    apiRequest("/api/metrics").then(setMetrics).catch(() => setMetrics(null));
+    refreshMetrics();
   }, []);
+
+  function refreshMetrics() {
+    apiRequest("/api/metrics").then(setMetrics).catch(() => setMetrics(null));
+  }
 
   async function scan(event) {
     event.preventDefault();
@@ -179,6 +183,7 @@ function Dashboard({ user, onSignOut }) {
         { scan_url: result.url, verdict: result.verdict, created_at: new Date().toISOString() },
         ...current,
       ]);
+      refreshMetrics();
     } catch (requestError) {
       setScanState(requestError.message.includes("valid") ? "validation" : "error");
       setScanError(requestError.message);
@@ -210,6 +215,7 @@ function Dashboard({ user, onSignOut }) {
         ...current,
         status: `Feedback recorded. ${response.trained_feedback_labels} labeled examples are being used for adaptive learning. Active threshold: ${Number(response.adaptive_threshold).toFixed(2)}.`,
       }));
+      refreshMetrics();
     } catch (requestError) {
       setFeedback((current) => ({ ...current, status: requestError.message }));
     }
@@ -366,7 +372,7 @@ function AnalysisReport({ result, comparison }) {
             </div>
           </div>
           <div className="report-section-label">Benchmark performance</div>
-          <div className="benchmark-grid">{reportModels.map((model) => <div className="benchmark-card" key={model.id}><span>{model.name}</span><strong>{Math.round((model.metrics.accuracy || 0) * 100)}%</strong><small>accuracy</small></div>)}</div>
+          <div className="benchmark-grid">{reportModels.map((model) => <div className="benchmark-card" key={model.id}><span>{model.name}</span><strong>{((model.metrics.accuracy ?? 0) * 100).toFixed(1)}%</strong><small>accuracy</small></div>)}</div>
           <p className="report-note">Live risk blends the classical ensemble with quantum interference. Benchmark values come from domain-held-out evaluation.</p>
         </>
       ) : <div className="report-empty"><div className="report-empty-icon">◈</div><h3>Your report will appear here</h3><p>Run a URL scan to see the overall risk score, model agreement, and benchmark performance.</p></div>}
