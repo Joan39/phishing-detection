@@ -47,6 +47,20 @@ def trusted_calibration_applies(url: str, features: pd.DataFrame) -> bool:
 
 
 def extract_url_features(url: str) -> pd.DataFrame:
+    return pd.DataFrame([url_feature_values(url)])
+
+
+def extract_url_features_frame(urls) -> pd.DataFrame:
+    """Extract features for many URLs into one frame.
+
+    Building one row frame per URL and concatenating them is quadratic and
+    dominates retraining time on the full corpus, so batch callers get a single
+    frame instead.
+    """
+    return pd.DataFrame([url_feature_values(url) for url in urls])
+
+
+def url_feature_values(url: str) -> dict[str, float]:
     if not isinstance(url, str) or not url.strip():
         raise ValueError("URL must be a non-empty string.")
 
@@ -103,4 +117,4 @@ def extract_url_features(url: str) -> pd.DataFrame:
         for feature in URL_DERIVED_FEATURES
         if feature in values
     }
-    return pd.DataFrame([ordered])
+    return ordered

@@ -66,7 +66,7 @@ def train_quantum_model(
 
     from .quantum_experiment import balanced_sample
     from .train_models import load_dataset
-    from .url_features import extract_url_features
+    from .url_features import extract_url_features_frame
 
     frame, target, groups = load_dataset(dataset)
     splits = list(
@@ -82,10 +82,7 @@ def train_quantum_model(
     x_train = scaler.fit_transform(frame.iloc[train_sample][QUANTUM_FEATURES])
     targets = target.iloc[train_sample].to_numpy()
     if feedback_urls and feedback_targets:
-        feedback_frame = pd.concat(
-            [extract_url_features(url) for url in feedback_urls],
-            ignore_index=True,
-        )
+        feedback_frame = extract_url_features_frame(feedback_urls)
         x_train = np.vstack(
             [x_train, scaler.transform(feedback_frame[QUANTUM_FEATURES])]
         )

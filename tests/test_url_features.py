@@ -1,5 +1,7 @@
 import unittest
 
+import pandas as pd
+
 from backend.url_features import extract_url_features
 
 
@@ -78,6 +80,23 @@ class UrlFeatureTests(unittest.TestCase):
             trusted_calibration_applies(
                 lookalike, extract_url_features(lookalike)
             )
+        )
+
+    def test_batch_extraction_matches_row_by_row(self):
+        from backend.url_features import extract_url_features_frame
+
+        urls = [
+            "https://example.com/a?b=1",
+            "http://192.168.0.1/x",
+            "no-scheme.test/path",
+            "https://en.wikipedia.org/wiki/Main_Page",
+        ]
+
+        pd.testing.assert_frame_equal(
+            extract_url_features_frame(urls),
+            pd.concat(
+                [extract_url_features(url) for url in urls], ignore_index=True
+            ),
         )
 
     def test_general_negatives_do_not_use_battery_hosts(self):

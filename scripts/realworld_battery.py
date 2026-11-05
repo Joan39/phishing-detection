@@ -172,7 +172,7 @@ def run_dataset_fit_check(limit_per_scheme: int = 6000) -> dict:
         _models,
         fuse_classical_probabilities,
     )
-    from backend.url_features import extract_url_features
+    from backend.url_features import extract_url_features_frame
 
     frame = pd.read_csv("original/PhiUSIIL_Phishing_URL_Dataset.csv")
     frame = frame.assign(
@@ -187,10 +187,7 @@ def run_dataset_fit_check(limit_per_scheme: int = 6000) -> dict:
             subset = subset.head(limit_per_scheme)
             if subset.empty:
                 continue
-            features = pd.concat(
-                [extract_url_features(url) for url in subset["URL"]],
-                ignore_index=True,
-            )
+            features = extract_url_features_frame(subset["URL"])
             scores = {
                 name: model.predict_proba(features)[:, 1]
                 for name, model in models.items()

@@ -43,9 +43,9 @@ from backend.train_models import (
     select_features,
 )
 from backend.url_features import (
-    extract_url_features,
-    trusted_calibration_applies,
     TRUSTED_DOMAIN_CAP,
+    extract_url_features_frame,
+    trusted_calibration_applies,
 )
 from scripts.realworld_battery import LEGITIMATE_URLS, PHISHING_URLS
 
@@ -69,9 +69,7 @@ BATTERY_URLS = [("legitimate", url) for url in LEGITIMATE_URLS] + [
 
 
 def _features(urls: list[str]) -> pd.DataFrame:
-    return pd.concat(
-        [extract_url_features(url) for url in urls], ignore_index=True
-    )
+    return extract_url_features_frame(urls)
 
 
 def load_fold_data() -> dict:

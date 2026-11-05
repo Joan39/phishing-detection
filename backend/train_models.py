@@ -181,13 +181,10 @@ def build_feature_frame(frame: pd.DataFrame, profile: str) -> pd.DataFrame:
     if "URL" not in frame.columns:
         raise ValueError("Raw URL features require the URL column.")
 
-    from .url_features import extract_url_features
+    from .url_features import extract_url_features_frame
 
     try:
-        return pd.concat(
-            [extract_url_features(value) for value in frame["URL"]],
-            ignore_index=True,
-        )
+        return extract_url_features_frame(frame["URL"])
     except ValueError as exc:
         raise ValueError(
             f"Could not extract features from the dataset URL values: {exc}"
