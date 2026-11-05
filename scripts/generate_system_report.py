@@ -49,10 +49,11 @@ def main(output_path):
         style="List Bullet",
     )
     doc.add_paragraph(
-        "In the quantum x RL configuration matrix, RL threshold adaptation "
-        "under simulated drift improved phishing F1 for every fusion weight; "
-        "the best configuration was 85% classical + 15% quantum with the bandit "
-        "learning threshold 0.30 (F1 0.9950, ROC-AUC 0.9998).",
+        "In the quantum x RL configuration matrix, the RL threshold bandit "
+        "beat the static threshold under simulated drift in every fusion "
+        "weight (classical-only F1 rose from 0.9889 static to 0.9940 adaptive); "
+        "the best configurations were 100% classical and 85% classical + 15% "
+        "quantum, both at adaptive F1 0.9940 with ROC-AUC 0.9999.",
         style="List Bullet",
     )
     doc.add_paragraph(
@@ -174,42 +175,46 @@ def main(output_path):
 
     doc.add_heading("5. Quantum ensemble x RL configuration matrix", level=1)
     doc.add_paragraph(
-        "One shared domain-held-out partition; quantum VQC trained on 1,000 "
-        "balanced rows per class with the strengthened defaults; classical "
-        "ensemble trained on the full fold; balanced 1,000-row test subset. "
-        "For each fusion weight, a static 0.50 threshold is compared against "
-        "the RL threshold bandit under simulated legitimacy-mimicking drift "
-        "(phishing rows made shorter and less obfuscated; labels revealed in "
-        "64-row batches)."
+        "One shared domain-held-out partition (seed 42); quantum VQC trained "
+        "on 2,000 balanced rows with the strengthened defaults; classical "
+        "ensemble trained on 188,637 rows; balanced 1,000-row test subset. "
+        "For each fusion weight the report compares a static 0.50 threshold "
+        "on clean features, a static 0.50 threshold under simulated "
+        "legitimacy-mimicking drift (the fairness baseline), and the RL "
+        "threshold bandit under the same drift (labels revealed in 64-row "
+        "batches, actions 0.30-0.70)."
     )
     add_table(
         doc,
-        ["Quantum weight", "Static F1 (clean)", "Static AUC (clean)",
-         "RL-adaptive F1 (drift)", "RL-adaptive AUC (drift)"],
+        ["Quantum weight", "Static F1 (clean)", "Static F1 (drift)",
+         "RL-adaptive F1 (drift)", "RL-adaptive ROC-AUC", "RL-adaptive FPR"],
         [
-            ["0.00 (classical only)", 0.9919, 0.9990, 0.9940, 0.9999],
-            ["0.15", 0.9919, 0.9989, 0.9950, 0.9998],
-            ["0.25 (live default)", 0.9919, 0.9986, 0.9940, 0.9991],
-            ["0.40", 0.9909, 0.9985, 0.9930, 0.9984],
+            ["0.00 (classical only)", 0.9919, 0.9889, 0.9940, 0.9999, 0.0040],
+            ["0.15", 0.9919, 0.9889, 0.9940, 0.9999, 0.0040],
+            ["0.25 (live default)", 0.9909, 0.9889, 0.9940, 0.9993, 0.0060],
+            ["0.40", 0.9909, 0.9889, 0.9910, 0.9987, 0.0120],
         ],
     )
     p = doc.add_paragraph()
     p.add_run("Findings:").bold = True
     doc.add_paragraph(
-        "The bandit converges to the 0.30 action in every configuration "
-        "(15 of 16 batches), which recovers the phishing rows whose scores "
-        "drift below 0.50, improving F1 over the classical-only baseline.",
+        "Under drift every configuration loses recall at the fixed 0.50 "
+        "threshold (10-11 missed phishing rows at zero false positives); the "
+        "bandit recovers it, lifting F1 from 0.9889 to 0.9940 for weights "
+        "0.00-0.25 at the cost of at most 2 false positives. It converges to "
+        "the 0.30 action in 15 of 16 batches.",
         style="List Bullet",
     )
     doc.add_paragraph(
-        "Moderate quantum weights (0.15-0.25) preserve near-classical clean "
-        "accuracy while adding ensemble diversity; 0.40 begins to degrade "
-        "both policies. The live 0.25 weight is inside the recommended range; "
-        "0.15 was the best single configuration in this run.",
+        "Quantum weights up to 0.25 preserve classical clean performance and "
+        "match the classical-only adaptive F1; 0.40 degrades both policies "
+        "(adaptive F1 0.9910, FPR 0.0120). The live 0.25 weight is inside the "
+        "safe range; the quantum member adds ensemble diversity and "
+        "probability separation rather than a measurable advantage.",
         style="List Bullet",
     )
     doc.add_paragraph(
-        "Fit cost: quantum 844 s vs classical 18 s on CPU simulation — the "
+        "Fit cost: quantum 883 s vs classical 27 s on CPU simulation — the "
         "quantum member is an evaluation-and-blend component, not a "
         "throughput optimization.",
         style="List Bullet",
