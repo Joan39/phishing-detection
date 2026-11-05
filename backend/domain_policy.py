@@ -18,6 +18,59 @@ DEFAULT_TRUSTED_ROOT_DOMAINS = frozenset(
     }
 )
 
+# Realistic legitimate URL shapes. The PhiUSIIL legitimate rows are almost all
+# bare domains, so models trained on the dataset alone label any long URL with
+# paths, queries, hyphens or digits as phishing. These templates give the
+# production models counter-examples that match real site traffic.
+LEGITIMATE_URL_TEMPLATES = (
+    "",
+    "/",
+    "/search?q=quantum+computing&hl=en",
+    "/search?q=phishing+report&client=firefox-b#/result-3",
+    "/news/2026/technology/neural-networks-explained",
+    "/blog/post/how-to-spot-fake-login-pages-2",
+    "/products/item-12345?color=blue&size=lg",
+    "/docs/getting-started/install-on-linux.html",
+    "/en-us/support/faq/contact-form",
+    "/wiki/Phishing",
+    "/wiki/Amanita_muscaria",
+    "/category/books/history?page=2",
+    "/user/profile?id=42",
+    "/api/v1/status.json",
+    "/files/2024/annual-report.pdf",
+    "/about/contact-us",
+    "/results?search_query=awareness+video&sp=1",
+    "/gp/new-releases/books/1/ref=zg_b_tab_1",
+    "/blogs/security/protecting-accounts-from-phishing",
+    "/en-us/102237",
+    "/store/b/surface?icid=nav-top",
+    "/V1/ServiceLogin?hl=en&continue=home",
+    "/login?redirect=%2Fdashboard",
+    "/c/2025/03/14/tech-ai-models-update/",
+)
+
+HARD_NEGATIVE_HOSTS = (
+    "www.google.com",
+    "accounts.google.com",
+    "docs.google.com",
+    "www.wikipedia.org",
+    "en.wikipedia.org",
+    "github.com",
+    "status.github.com",
+    "docs.github.com",
+    "www.microsoft.com",
+    "support.microsoft.com",
+    "www.amazon.com",
+    "aws.amazon.com",
+    "www.youtube.com",
+    "support.apple.com",
+    "www.example.com",
+)
+
+# Each template/host example is repeated this many times in production
+# training so the counter-examples outweigh the bare-domain majority.
+HARD_NEGATIVE_REPLICAS = 250
+
 
 def trusted_root_domains() -> frozenset[str]:
     configured = os.getenv("QPHISH_TRUSTED_ROOT_DOMAINS")
@@ -58,14 +111,31 @@ def is_trusted_domain_url(url: str) -> bool:
 
 
 def trusted_root_training_urls() -> list[str]:
-    """Return clean root and canonical-page examples for production training."""
+    """Return legitimate hard negatives for production training.
+
+    Real-world legitimate URLs routinely carry paths, query parameters and
+    subdomains, while the dataset's legitimate rows are almost bare domains.
+    Without these hard negatives the models learn "any parameter means
+    phishing" and false-positive on ordinary site traffic. Rows are expanded
+    from hosts x templates; build_production_training_data applies
+    HARD_NEGATIVE_REPLICAS as a class weight.
+    """
     domains = sorted(trusted_root_domains())
-    canonical_urls = {
-        "https://accounts.google.com",
-        "https://github.com/login",
-        "https://www.microsoft.com/en-us",
-        "https://www.wikipedia.org/wiki/Main_Page",
-        "https://www.youtube.com",
-        "https://example.com",
-    }
-    return [f"https://{domain}" for domain in domains] + sorted(canonical_urls)
+    urls = {f"https://{domain}" for domain in domains}
+    urls.update(
+        {
+            "https://accounts.google.com",
+            "https://github.com/login",
+            "https://www.microsoft.com/en-us",
+            "https://www.wikipedia.org/wiki/Main_Page",
+            "https://www.youtube.com",
+            "https://example.com",
+        }
+    )
+    for host in HARD_NEGATIVE_HOSTS:
+        for template in LEGITIMATE_URL_TEMPLATES:
+            urls.add(f"https://{host}{template}")
+    for host in HARD_NEGATIVE_HOSTS[:4]:
+        for template in LEGITIMATE_URL_TEMPLATES[:8]:
+            urls.add(f"http://{host}{template}")
+    return sorted(urls)

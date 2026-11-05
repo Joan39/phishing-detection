@@ -45,7 +45,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from .domain_policy import trusted_root_training_urls
+from .domain_policy import HARD_NEGATIVE_REPLICAS, trusted_root_training_urls
 
 
 DEFAULT_DATASET = Path("original") / "PhiUSIIL_Phishing_URL_Dataset.csv"
@@ -205,12 +205,16 @@ def build_production_training_data(
         pd.DataFrame({"URL": hard_negative_urls}),
         "url_raw",
     )
+    hard_negative_frame = pd.concat(
+        [hard_negative_frame] * HARD_NEGATIVE_REPLICAS,
+        ignore_index=True,
+    )
     feature_frame = pd.concat(
         [feature_frame, hard_negative_frame],
         ignore_index=True,
     )
     target = pd.concat(
-        [target, pd.Series([0] * len(hard_negative_urls), dtype=int)],
+        [target, pd.Series([0] * len(hard_negative_frame), dtype=int)],
         ignore_index=True,
     )
     features = select_features(feature_frame, "url_raw")

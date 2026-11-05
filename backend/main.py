@@ -37,7 +37,10 @@ from .train_models import (
     make_ensemble,
 )
 from .domain_policy import is_trusted_domain_url
-from .quantum_live import predict_quantum_probability, train_quantum_model
+from .quantum_live import (
+    adapt_live_model,
+    predict_quantum_probability,
+)
 from .url_features import extract_url_features
 
 
@@ -579,15 +582,14 @@ def _schedule_quantum_adaptation() -> None:
                     "SELECT scan_url, analyst_verdict FROM feedback "
                     "WHERE analyst_verdict != 'uncertain' ORDER BY id"
                 ).fetchall()
-            train_quantum_model(
+            adapt_live_model(
                 DEFAULT_DATASET,
                 QUANTUM_MODEL_FILE,
-                train_per_class=500,
-                maxiter=10,
-                feedback_urls=[row["scan_url"] for row in rows],
-                feedback_targets=[
+                [row["scan_url"] for row in rows],
+                [
                     int(row["analyst_verdict"] == "phishing") for row in rows
                 ],
+                quantum_weight=QUANTUM_WEIGHT,
             )
             with _db() as connection:
                 connection.execute(
@@ -684,12 +686,22 @@ def _optional_json_result(name: str) -> dict | None:
     return _load_json_result(name)
 
 
+_MODEL_CACHE: dict[str, tuple] = {}
+
+
 def _models() -> dict[str, object]:
     loaded: dict[str, object] = {}
     for name in ("A", "B"):
         path = MODEL_DIR / f"model_{name}.joblib"
-        if path.exists():
-            loaded[name] = joblib.load(path)
+        if not path.exists():
+            continue
+        stat = path.stat()
+        cache_key = (stat.st_mtime_ns, stat.st_size)
+        cached = _MODEL_CACHE.get(name)
+        if cached is None or cached[0] != cache_key:
+            cached = (cache_key, joblib.load(path))
+            _MODEL_CACHE[name] = cached
+        loaded[name] = cached[1]
     if not loaded:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -698,16 +710,26 @@ def _models() -> dict[str, object]:
     return loaded
 
 
+_QUANTUM_CACHE: dict[str, object] = {"key": None, "model": None}
+
+
 def _quantum_model() -> dict:
+    global _QUANTUM_CACHE
     if not QUANTUM_MODEL_FILE.exists():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Quantum live inference model is unavailable.",
         )
     try:
-        from .quantum_live import load_quantum_model
+        stat = QUANTUM_MODEL_FILE.stat()
+        cache_key = (stat.st_mtime_ns, stat.st_size)
+        cached = _QUANTUM_CACHE["model"]
+        if cached is None or _QUANTUM_CACHE["key"] != cache_key:
+            from .quantum_live import load_quantum_model
 
-        return load_quantum_model(QUANTUM_MODEL_FILE)
+            cached = load_quantum_model(QUANTUM_MODEL_FILE)
+            _QUANTUM_CACHE = {"key": cache_key, "model": cached}
+        return cached
     except (OSError, ValueError, ImportError) as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -999,6 +1021,14 @@ def model_comparison() -> dict:
             "comparisons": combined.get("comparisons", {}),
             "rl": combined.get("rl", {}),
         }
+    matrix = _optional_json_result("quantum_rl_configuration_experiment.json")
+    if matrix is not None:
+        response["configuration_matrix"] = {
+            "experiment": matrix.get("experiment"),
+            "circuit": matrix.get("circuit", {}),
+            "drift": matrix.get("drift"),
+            "configurations": matrix.get("configurations", []),
+        }
     response["final_risk_score"] = {
         "live_model": "75% classical + 25% quantum interference"
         if QUANTUM_MODEL_FILE.exists()
@@ -1108,12 +1138,12 @@ def scan(
     features = extract_url_features(request.url)
     models = _models()
     quantum_model = _quantum_model()
-    # The training pipeline maps original label 0 (phishing) to target 1.
-    probabilities = [
-        float(model.predict_proba(features)[:, 1][0])
-        for model in models.values()
-    ]
-    classical_probability = sum(probabilities) / len(probabilities)
+    # The training pipeline defines target 1 as phishing.
+    model_scores = {
+        name: float(model.predict_proba(features)[:, 1][0])
+        for name, model in models.items()
+    }
+    classical_probability = sum(model_scores.values()) / len(model_scores)
     quantum_probability = predict_quantum_probability(quantum_model, features)
     probability = (
         (1 - QUANTUM_WEIGHT) * classical_probability
@@ -1128,7 +1158,7 @@ def scan(
     )
     if trusted_domain_calibration:
         probability = min(probability, 0.25)
-    # The trained experiments define original label 0 as phishing.
+    # Phishing is the positive class (target 1) in all trained models.
     decision_threshold = _active_threshold(_load_rl_state())
     is_phishing = probability >= decision_threshold
     response = ScanResponse(
@@ -1146,10 +1176,7 @@ def scan(
             "special_character_count": int(features["NoOfOtherSpecialCharsInURL"].iloc[0]),
             "trusted_domain_calibration": trusted_domain_calibration,
         },
-        model_scores={
-            name: float(model.predict_proba(features)[:, 1][0])
-            for name, model in models.items()
-        }
+        model_scores=model_scores
         | {
             "quantum": quantum_probability,
             "hybrid": probability,

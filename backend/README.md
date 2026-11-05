@@ -26,11 +26,15 @@ uvicorn backend.main:app --reload
 ```
 
 The API uses the saved models in `models/url/` and keeps the model's training
-convention that original label `0` represents phishing.
-Production retraining adds canonical pages from configured trusted domains as
-legitimate hard negatives. Live scoring also applies a bounded trusted-domain
-calibration only when the URL has no IP, obfuscation, or unusual special
-characters; lookalike domains remain model-scored.
+convention that original label `0` represents phishing (target `1`).
+Production retraining adds a weighted corpus of realistic legitimate URL
+shapes (paths, queries, hyphens, digits, mixed hosts) as hard negatives,
+because the dataset's legitimate rows are almost bare domains. Without them
+the models label every ordinary site URL as phishing. Tune the corpus in
+`domain_policy.py` (`LEGITIMATE_URL_TEMPLATES`, `HARD_NEGATIVE_REPLICAS`).
+Live scoring also applies a bounded trusted-domain calibration only when the
+URL has no IP, obfuscation, or unusual special characters; lookalike domains
+remain model-scored.
 
 `/api/models/comparison` reads the saved classical and quantum experiment
 reports from `results/`. Live URL scoring uses the saved quantum-enhanced
@@ -94,3 +98,32 @@ increase data exposure, circuit capacity, optimization budget, and sampling
 stability. They increase runtime and do not guarantee a quantum advantage.
 Use `--quantum-train-per-class`, `--circuit-reps`, `--maxiter`, and `--shots`
 to run controlled ablations.
+
+## Live quantum model
+
+The live hybrid scorer reads `models/quantum_live.joblib`. Retrain it with the
+strengthened defaults:
+
+```powershell
+python -m backend.quantum_live --output models/quantum_live.joblib
+```
+
+Every artifact stores its circuit configuration and blend weight; loading
+infers the circuit repetitions from the parameter count for older artifacts.
+The `/api/feedback` endpoint adapts this model in a background worker once
+enough labeled feedback accumulates, keeping the full balanced training set
+with a reduced COBYLA budget.
+
+## Quantum ensemble x RL configuration matrix
+
+To compare fusion weights (classical/quantum) and decision policies (static
+threshold vs the RL threshold bandit) on one shared domain-held-out partition,
+under simulated legitimacy-mimicking drift:
+
+```powershell
+python -m backend.quantum_rl_configuration_experiment `
+  --output results/quantum_rl_configuration_experiment.json
+```
+
+`/api/models/comparison` includes the resulting matrix under
+`configuration_matrix` when the JSON exists.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,10 @@ QUANTUM_FEATURES = [
 QUANTUM_CIRCUIT_REPS = 2
 QUANTUM_DEFAULT_MAXITER = 60
 QUANTUM_DEFAULT_SHOTS = 512
+QUANTUM_DEFAULT_TRAIN_PER_CLASS = 1000
+# Feedback adaptation runs in a background worker, so it uses a smaller
+# optimization budget than the strengthened full-training defaults.
+QUANTUM_ADAPTATION_MAXITER = 20
 
 
 def _build_classifier(*, maxiter: int, shots: int, seed: int, reps: int):
@@ -48,9 +53,11 @@ def train_quantum_model(
     *,
     seed: int = 42,
     fold: int = 0,
-    train_per_class: int = 1000,
+    train_per_class: int = QUANTUM_DEFAULT_TRAIN_PER_CLASS,
     maxiter: int = QUANTUM_DEFAULT_MAXITER,
     shots: int = QUANTUM_DEFAULT_SHOTS,
+    reps: int = QUANTUM_CIRCUIT_REPS,
+    quantum_weight: float = 0.25,
     feedback_urls: list[str] | None = None,
     feedback_targets: list[int] | None = None,
 ) -> None:
@@ -87,7 +94,7 @@ def train_quantum_model(
         maxiter=maxiter,
         shots=shots,
         seed=seed,
-        reps=QUANTUM_CIRCUIT_REPS,
+        reps=reps,
     )
     classifier.fit(x_train, targets)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -97,14 +104,19 @@ def train_quantum_model(
             "scaler": scaler,
             "model_weights": classifier.weights,
             "features": QUANTUM_FEATURES,
-            "weights": {"quantum": 0.25, "classical": 0.75},
+            "weights": {
+                "quantum": quantum_weight,
+                "classical": 1 - quantum_weight,
+            },
             "circuit": {
                 "feature_map": "ZZFeatureMap",
                 "ansatz": "RealAmplitudes",
                 "qubits": len(QUANTUM_FEATURES),
-                "reps": QUANTUM_CIRCUIT_REPS,
+                "reps": reps,
                 "sampler": "StatevectorSampler",
                 "shots": shots,
+                "maxiter": maxiter,
+                "train_per_class": train_per_class,
             },
         },
         temporary,
@@ -119,14 +131,23 @@ def load_quantum_model(path: Path) -> dict[str, Any]:
     if not isinstance(model, dict) or not {"scaler", "model_weights"} <= model.keys():
         raise ValueError("Quantum live model has an invalid artifact format.")
     circuit = model.get("circuit", {})
+    weights = np.asarray(model["model_weights"])
+    qubits = int(circuit.get("qubits", len(QUANTUM_FEATURES)))
+    if "reps" in circuit:
+        reps = int(circuit["reps"])
+    else:
+        # Linear-entanglement RealAmplitudes uses qubits parameters per rep
+        # plus one final layer; infer reps from artifacts predating metadata.
+        params_per_rep = qubits
+        reps = max(1, (weights.size - qubits) // params_per_rep)
     classifier = _build_classifier(
         maxiter=1,
         shots=int(circuit.get("shots", QUANTUM_DEFAULT_SHOTS)),
         seed=42,
-        reps=int(circuit.get("reps", 1)),
+        reps=reps,
     )
     classifier._fit_result = type(
-        "FitResult", (), {"x": np.asarray(model["model_weights"])}
+        "FitResult", (), {"x": weights}
     )()
     model["classifier"] = classifier
     return model
@@ -144,3 +165,74 @@ def predict_quantum_probability(
     if probabilities.ndim != 2 or probabilities.shape[1] < 2:
         raise ValueError("Quantum classifier returned invalid probabilities.")
     return float(probabilities[0, 1])
+
+
+def adapt_live_model(
+    dataset: Path,
+    output: Path,
+    feedback_urls: list[str],
+    feedback_targets: list[int],
+    *,
+    seed: int = 42,
+    quantum_weight: float = 0.25,
+) -> None:
+    """Background retrain path used by the feedback endpoint.
+
+    Keeps the strengthened circuit config but a smaller optimization budget,
+    because this runs inside a worker thread while the API serves scans.
+    """
+
+    train_quantum_model(
+        dataset,
+        output,
+        seed=seed,
+        train_per_class=QUANTUM_DEFAULT_TRAIN_PER_CLASS,
+        maxiter=QUANTUM_ADAPTATION_MAXITER,
+        shots=QUANTUM_DEFAULT_SHOTS,
+        reps=QUANTUM_CIRCUIT_REPS,
+        quantum_weight=quantum_weight,
+        feedback_urls=feedback_urls,
+        feedback_targets=feedback_targets,
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    from .train_models import DEFAULT_DATASET
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data", type=Path, default=DEFAULT_DATASET)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("models") / "quantum_live.joblib",
+    )
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--fold", type=int, default=0, choices=range(5))
+    parser.add_argument(
+        "--train-per-class", type=int, default=QUANTUM_DEFAULT_TRAIN_PER_CLASS
+    )
+    parser.add_argument("--maxiter", type=int, default=QUANTUM_DEFAULT_MAXITER)
+    parser.add_argument("--shots", type=int, default=QUANTUM_DEFAULT_SHOTS)
+    parser.add_argument("--circuit-reps", type=int, default=QUANTUM_CIRCUIT_REPS)
+    parser.add_argument("--quantum-weight", type=float, default=0.25)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    train_quantum_model(
+        args.data,
+        args.output,
+        seed=args.seed,
+        fold=args.fold,
+        train_per_class=args.train_per_class,
+        maxiter=args.maxiter,
+        shots=args.shots,
+        reps=args.circuit_reps,
+        quantum_weight=args.quantum_weight,
+    )
+    print(f"Live quantum model written to {args.output}")
+
+
+if __name__ == "__main__":
+    main()
