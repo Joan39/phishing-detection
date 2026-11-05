@@ -1049,6 +1049,11 @@ def model_comparison() -> dict:
         if QUANTUM_MODEL_FILE.exists()
         else "A+B ensemble",
         "quantum_included": QUANTUM_MODEL_FILE.exists(),
+        "live_fusion": {
+            "quantum_weight": QUANTUM_WEIGHT,
+            "classical_weights": CLASSICAL_WEIGHTS,
+            "decision_threshold": _active_threshold(_load_rl_state()),
+        },
         "reason": (
             "Live URL scoring blends the persisted VQC probability with the "
             "classical ensemble."
@@ -1145,6 +1150,35 @@ def feedback(
     }
 
 
+def fuse_classical_probabilities(
+    model_scores: dict[str, float],
+    weights: dict[str, float],
+) -> float:
+    """Weighted mean of per-model phishing probabilities.
+
+    Models absent from ``weights`` count equally at 1.0, so an empty weights
+    dict (``QPHISH_CLASSICAL_WEIGHTS=""``) yields the plain average.
+    """
+    weight_total = sum(weights.get(name, 1.0) for name in model_scores)
+    if weight_total <= 0:
+        raise ValueError("Classical fusion requires at least one positive weight.")
+    return sum(
+        weights.get(name, 1.0) * score
+        for name, score in model_scores.items()
+    ) / weight_total
+
+
+def fuse_hybrid_probability(
+    classical_probability: float,
+    quantum_probability: float,
+    quantum_weight: float,
+) -> float:
+    return (
+        (1 - quantum_weight) * classical_probability
+        + quantum_weight * quantum_probability
+    )
+
+
 @app.post("/api/scans", response_model=ScanResponse)
 def scan(
     request: ScanRequest,
@@ -1158,15 +1192,12 @@ def scan(
         name: float(model.predict_proba(features)[:, 1][0])
         for name, model in models.items()
     }
-    weight_total = sum(CLASSICAL_WEIGHTS.get(name, 1.0) for name in model_scores)
-    classical_probability = sum(
-        CLASSICAL_WEIGHTS.get(name, 1.0) * score
-        for name, score in model_scores.items()
-    ) / weight_total
+    classical_probability = fuse_classical_probabilities(
+        model_scores, CLASSICAL_WEIGHTS
+    )
     quantum_probability = predict_quantum_probability(quantum_model, features)
-    probability = (
-        (1 - QUANTUM_WEIGHT) * classical_probability
-        + QUANTUM_WEIGHT * quantum_probability
+    probability = fuse_hybrid_probability(
+        classical_probability, quantum_probability, QUANTUM_WEIGHT
     )
     trusted_domain_calibration = (
         is_trusted_domain_url(request.url)
