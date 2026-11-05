@@ -2,6 +2,7 @@
 __pycache__/
 .env
 *.secret
+results/
 results/*.db
 results/*.db-shm
 results/*.db-wal

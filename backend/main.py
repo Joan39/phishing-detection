@@ -36,12 +36,15 @@ from .train_models import (
     make_baseline,
     make_ensemble,
 )
-from .domain_policy import is_trusted_domain_url
+from .url_features import (
+    TRUSTED_DOMAIN_CAP,
+    extract_url_features,
+    trusted_calibration_applies,
+)
 from .quantum_live import (
     adapt_live_model,
     predict_quantum_probability,
 )
-from .url_features import OTHER_SPECIAL_CHARACTERS, extract_url_features
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1202,21 +1205,11 @@ def scan(
     probability = fuse_hybrid_probability(
         classical_probability, quantum_probability, QUANTUM_WEIGHT
     )
-    trusted_domain_calibration = (
-        is_trusted_domain_url(request.url)
-        and not bool(features["IsDomainIP"].iloc[0])
-        and not bool(features["HasObfuscation"].iloc[0])
-        # Fragments are never sent to the server, so only pre-fragment
-        # special characters disqualify a trusted host from calibration.
-        and sum(
-            character in OTHER_SPECIAL_CHARACTERS
-            for character in request.url.split("#", 1)[0]
-        )
-        == 0
-        and int(features["NoOfSubDomain"].iloc[0]) <= 2
+    trusted_domain_calibration = trusted_calibration_applies(
+        request.url, features
     )
     if trusted_domain_calibration:
-        probability = min(probability, 0.25)
+        probability = min(probability, TRUSTED_DOMAIN_CAP)
     # Phishing is the positive class (target 1) in all trained models.
     decision_threshold = _active_threshold(_load_rl_state())
     is_phishing = probability >= decision_threshold

@@ -61,6 +61,43 @@ class UrlFeatureTests(unittest.TestCase):
         self.assertTrue(is_trusted_domain_url("https://accounts.google.com"))
         self.assertFalse(is_trusted_domain_url("https://google.com.evil.test"))
 
+    def test_calibration_cap_needs_trusted_host_and_clean_shape(self):
+        from backend.url_features import trusted_calibration_applies
+
+        clean = "https://en.wikipedia.org/wiki/Main_Page"
+        self.assertTrue(
+            trusted_calibration_applies(clean, extract_url_features(clean))
+        )
+        # Encoded obfuscation on a trusted host is not the real brand.
+        rigged = "https://en.wikipedia.org/%2e%2e/verify?x=%40"
+        self.assertFalse(
+            trusted_calibration_applies(rigged, extract_url_features(rigged))
+        )
+        lookalike = "https://en.wikipedia.org.login-verify-account.xyz"
+        self.assertFalse(
+            trusted_calibration_applies(
+                lookalike, extract_url_features(lookalike)
+            )
+        )
+
+    def test_general_negatives_do_not_use_battery_hosts(self):
+        """Training counter-examples must stay disjoint from the test battery."""
+        from backend.domain_policy import general_legitimate_training_urls
+        from scripts.realworld_battery import LEGITIMATE_URLS
+        from urllib.parse import urlsplit
+
+        def hosts(urls):
+            return {
+                (urlsplit(url if "://" in url else "//" + url).hostname or "")
+                .lower()
+                .removeprefix("www.")
+                for url in urls
+            }
+
+        self.assertFalse(
+            hosts(general_legitimate_training_urls()) & hosts(LEGITIMATE_URLS)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

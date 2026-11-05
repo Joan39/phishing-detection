@@ -14,11 +14,36 @@ from urllib.parse import urlsplit
 import pandas as pd
 
 from .train_models import URL_DERIVED_FEATURES
-from .domain_policy import is_trusted_root_url
+from .domain_policy import is_trusted_domain_url, is_trusted_root_url
 
 
 OBFUSCATED_TOKEN = re.compile(r"%[0-9A-Fa-f]{2}")
 OTHER_SPECIAL_CHARACTERS = set("@!#$%^*()[]{}'\";,<>|\\")
+
+# Probability ceiling applied to a URL on a configured trusted domain.
+TRUSTED_DOMAIN_CAP = 0.25
+
+
+def trusted_calibration_applies(url: str, features: pd.DataFrame) -> bool:
+    """Return whether the trusted-domain probability cap may be applied.
+
+    A trusted hostname alone is not enough: an IP host, percent-encoded
+    obfuscation, unusual special characters or excessive subdomain depth mean
+    the URL is not behaving like the real brand, so it is scored normally.
+    """
+    return (
+        is_trusted_domain_url(url)
+        and not bool(features["IsDomainIP"].iloc[0])
+        and not bool(features["HasObfuscation"].iloc[0])
+        # Fragments are never sent to the server, so only pre-fragment
+        # special characters disqualify a trusted host from calibration.
+        and sum(
+            character in OTHER_SPECIAL_CHARACTERS
+            for character in url.split("#", 1)[0]
+        )
+        == 0
+        and int(features["NoOfSubDomain"].iloc[0]) <= 2
+    )
 
 
 def extract_url_features(url: str) -> pd.DataFrame:

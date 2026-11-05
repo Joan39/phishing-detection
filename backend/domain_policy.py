@@ -67,6 +67,59 @@ HARD_NEGATIVE_HOSTS = (
     "www.example.com",
 )
 
+# Ordinary legitimate hosts: real organisations that are not brand-targeted
+# enough to belong in the trusted list, but whose URLs users do type. The
+# dataset's legitimate rows never look like these (bare domains, all HTTPS), so
+# without them the system flags any unfamiliar path as phishing.
+GENERAL_LEGITIMATE_HOSTS = (
+    "www.mozilla.org",
+    "developer.mozilla.org",
+    "www.chromium.org",
+    "www.apache.org",
+    "nginx.org",
+    "redis.io",
+    "kubernetes.io",
+    "go.dev",
+    "www.rust-lang.org",
+    "www.php.net",
+    "www.npmjs.com",
+    "www.w3.org",
+    "www.openssl.org",
+    "curl.se",
+    "www.nasa.gov",
+    "www.noaa.gov",
+    "web.mit.edu",
+    "www.stanford.edu",
+    "www.harvard.edu",
+    "www.cam.ac.uk",
+    "ethz.ch",
+    "www.kaggle.com",
+    "www.coursera.org",
+    "www.edx.org",
+    "www.icann.org",
+    "www.iana.org",
+    "archive.org",
+    "www.openstreetmap.org",
+    "www.debian.org",
+    "ubuntu.com",
+    "fedoraproject.org",
+)
+
+# Short, ordinary paths. Kept short because the shapes users actually reach over
+# plain HTTP are simple; long hyphen-heavy paths look like attack hosts.
+GENERAL_LEGITIMATE_PATHS = (
+    "",
+    "/",
+    "/index.html",
+    "/about",
+    "/about-us.html",
+    "/contact",
+    "/docs/getting-started.pdf",
+    "/news/2026/article",
+    "/products/item-123",
+    "/support/faq",
+)
+
 # Each template/host example is repeated this many times in production
 # training so the counter-examples outweigh the bare-domain majority.
 HARD_NEGATIVE_REPLICAS = 250
@@ -138,4 +191,24 @@ def trusted_root_training_urls() -> list[str]:
     for host in HARD_NEGATIVE_HOSTS[:4]:
         for template in LEGITIMATE_URL_TEMPLATES[:8]:
             urls.add(f"http://{host}{template}")
+    return sorted(urls)
+
+
+def general_legitimate_training_urls() -> list[str]:
+    """Return legitimate counter-examples for ordinary non-brand sites."""
+    urls: set[str] = set()
+    for host in GENERAL_LEGITIMATE_HOSTS:
+        for path in GENERAL_LEGITIMATE_PATHS:
+            urls.add(f"https://{host}{path}")
+    for host in GENERAL_LEGITIMATE_HOSTS[: len(GENERAL_LEGITIMATE_HOSTS) // 2]:
+        for path in GENERAL_LEGITIMATE_PATHS[:6]:
+            urls.add(f"http://{host}{path}")
+    return sorted(urls)
+
+
+def legitimate_training_urls(include_general_hosts: bool = True) -> list[str]:
+    """Return the full legitimate hard-negative URL set used for production."""
+    urls = set(trusted_root_training_urls())
+    if include_general_hosts:
+        urls.update(general_legitimate_training_urls())
     return sorted(urls)
