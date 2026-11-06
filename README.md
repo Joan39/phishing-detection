@@ -21,6 +21,12 @@ URL ──> 19 structural features ──> classical ensemble (LR + voting + boo
   corpus (phishing F1 up to 0.9945 on held-out domains).
 - **Quantum detector** — 4-qubit VQC (`ZZFeatureMap` + `RealAmplitudes`,
   512 shots) contributing ensemble diversity to the hybrid score.
+- **Real-world generalization** — a dataset-held-out fold cannot see the failure
+  mode that matters in use (PhiUSIIL legitimate rows are nearly all bare
+  domains), so two host-disjoint curated sets of 74 URLs are scored as well;
+  legitimate accuracy went from 0.38 to 0.73 through the deployed pipeline
+  while phishing detection stayed at 1.00 on both sets
+  (`docs/Experiments-and-Results.md` §6).
 - **RL adaptation** — an epsilon-greedy bandit tunes the decision threshold
   (0.30–0.70) from analyst verdicts; under simulated drift it lifts phishing
   F1 from 0.9889 (static) to 0.9940.

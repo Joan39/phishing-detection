@@ -74,12 +74,25 @@ mtime/size changes, so retraining takes effect without a restart.
 - **Label convention:** the dataset encodes phishing as original label `0`;
   every training path maps this to target `1`, so *target 1 = phishing* and
   all metrics report phishing as the positive class.
-- Production training (`backend/train_models.py`) adds a realistic-legitimate
-  hard-negative corpus: 402 URL shapes (search paths, wiki articles, API
-  routes, query strings, fragments, digits, deep subdomains, HTTP and HTTPS)
-  generated from curated hosts in `backend/domain_policy.py`, each replicated
-  250×. This corrects the dataset artifact where legitimate rows are almost
-  all bare domains, which otherwise makes models flag any realistic URL.
+- Production training (`backend/train_models.build_production_training_data`)
+  appends a realistic-legitimate hard-negative corpus generated in
+  `backend/domain_policy.py`, because the dataset's legitimate rows are almost
+  all bare HTTPS domains (mean length 27, p99 length 39) and models trained on
+  it alone flag any realistic URL. Three blocks, each weighted by repetition:
+  - 402 canonical pages on the seven trusted brand roots (`trusted_root_training_urls`),
+  - 7,712 URL shapes from 85 curated non-brand hosts crossed with 44 path
+    shapes — bare origins, deep hyphenated article slugs, dated news paths,
+    query strings, PDFs, API routes, both schemes (`legitimate_training_urls`),
+    replicated `HARD_NEGATIVE_REPLICAS` (10) times,
+  - the 170 plain-HTTP bare origins on those hosts, additionally weighted
+    `BARE_HTTP_REPLICAS` (60) times, since the corpus contains no HTTP
+    legitimate row at all.
+  `hard_negative_blocks()` is the single source for that weighting: production
+  training and `scripts/legit_negative_experiment.py` read the same blocks, so a
+  measured configuration cannot drift from a deployed one.
+- Hosts in the corpus are kept disjoint from the evaluation URLs;
+  `tests/test_url_features.py` asserts that both real-world sets have no host in
+  common with the training corpus (only the trusted brand roots may coincide).
 
 ## 5. Persistence
 

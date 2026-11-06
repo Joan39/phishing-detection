@@ -137,19 +137,24 @@ Every labeled correction:
 
 | Stage | Value | Why |
 | --- | --- | --- |
-| Model A | 0.99 | Brand-hyphen pattern + long host dominate the linear model |
-| Model B | 0.98 | Trees agree; the domain is not a trusted root |
-| Classical fusion | 0.985 | 0.35·0.99 + 0.65·0.98 |
-| Quantum VQC | 0.32 | Encoded length/domain/subdomain state leans legitimate |
-| Hybrid | 0.82 | 0.75·0.985 + 0.25·0.32 |
+| Model A | 0.977 | Brand-hyphen pattern + long host dominate the linear model |
+| Model B | 0.979 | Trees agree; the domain is not a trusted root |
+| Classical fusion | 0.978 | 0.35·0.977 + 0.65·0.979 |
+| Quantum VQC | 0.318 | Encoded length/domain/subdomain state leans legitimate |
+| Hybrid | 0.813 | 0.75·0.978 + 0.25·0.318 |
 | Calibration | n/a | Host is a lookalike chain, safeguard does not apply |
-| Threshold | 0.40 (bandit) | 0.82 ≥ 0.40 → **phishing**, risk level *high* |
+| Threshold | 0.40 (bandit) | 0.813 ≥ 0.40 → **phishing**, risk level *high* |
 
-Contrast: `https://en.wikipedia.org/wiki/Main_Page` produces a raw hybrid of
-0.37 — legitimate, but uncomfortably close to the 0.40 threshold because B
-(0.42) and the VQC (0.59) react to its multi-part path. Trusted-domain
-calibration caps it at 0.25, giving a safe margin, so long legitimate site
-pages are never borderline.
+Two legitimate contrasts show what the corpus fix bought.
+`https://en.wikipedia.org/wiki/Main_Page` scores a raw hybrid of 0.315 —
+legitimate, but close to the 0.40 threshold because B (0.308) and the VQC
+(0.586) react to its multi-part path; trusted-domain calibration caps it at
+0.25, giving a safe margin. A non-brand page the cap knows nothing about,
+`https://www.economist.com/science-and-technology/2026-03-14/quantum-advantage`,
+now scores A 0.165, B 0.234, hybrid 0.345 → *legitimate, medium risk*; the same
+URL scored 0.694 and was flagged before the long-path negatives were added. It
+passes on model strength alone, with only 0.055 of margin, which is the honest
+limit of URL morphology on a 68-character dated slug.
 
 ## 10. What the system does *not* claim
 

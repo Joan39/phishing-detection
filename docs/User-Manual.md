@@ -139,5 +139,6 @@ how detection works and the privacy stance (structure-only analysis).
 | *"The backend is unavailable"* | The API is not running or `VITE_API_BASE_URL` points elsewhere. Start the backend (see the Development Setup guide). |
 | Detection engine pill says *unavailable* | Model files are missing or unreadable on the server. Ask the operator to retrain or restore `models/`. |
 | Verdict seems wrong | Submit feedback — the threshold adapts and the models retrain. |
-| Scan of a normal site page looks risky | Check the report: if the domain is trusted but calibration did not apply, the URL likely contains obfuscation or unusual characters. |
+| Scan of a normal site page looks risky | Check the report: if the domain is trusted but calibration did not apply, the URL likely contains obfuscation or unusual characters. Calibration only covers the brand roots in `QPHISH_TRUSTED_ROOT_DOMAINS` (amazon, apple, github, google, microsoft, wikipedia, youtube by default). |
+| Long article or documentation URL is borderline | Expected residual: URL morphology alone cannot separate a dated hyphenated article slug from a lookalike campaign path, so such pages land near the threshold. Submit feedback — the label enters the next retraining batch. |
 | Sign-in fails after reset link | Verify the email address first if the deployment requires verification. |
