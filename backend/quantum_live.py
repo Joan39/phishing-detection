@@ -20,9 +20,34 @@ QUANTUM_CIRCUIT_REPS = 2
 QUANTUM_DEFAULT_MAXITER = 60
 QUANTUM_DEFAULT_SHOTS = 512
 QUANTUM_DEFAULT_TRAIN_PER_CLASS = 1000
+# Legitimate counter-examples mixed into every quantum training run, including
+# the feedback-triggered ones. The circuit sees only four lexical features and
+# the dataset's legitimate rows are bare HTTPS domains, so without these it
+# learns "long URL = phishing" and returns ~0.56 for all real-world traffic,
+# which adds a floor of about 0.14 to every hybrid score.
+QUANTUM_DEFAULT_HARD_NEGATIVES = 1500
 # Feedback adaptation runs in a background worker, so it uses a smaller
 # optimization budget than the strengthened full-training defaults.
 QUANTUM_ADAPTATION_MAXITER = 20
+
+
+def strided_sample(urls: list[str], count: int) -> list[str]:
+    """Return ``count`` evenly spaced URLs; ``0`` means none, not all."""
+    if count <= 0:
+        return []
+    if count >= len(urls):
+        return list(urls)
+    step = len(urls) / count
+    return [urls[int(index * step)] for index in range(count)]
+
+
+def hard_negative_feedback_rows(
+    count: int = QUANTUM_DEFAULT_HARD_NEGATIVES,
+) -> tuple[list[str], list[int]]:
+    from .domain_policy import legitimate_training_urls
+
+    urls = strided_sample(legitimate_training_urls(), count)
+    return urls, [0] * len(urls)
 
 
 def _build_classifier(*, maxiter: int, shots: int, seed: int, reps: int):
@@ -180,8 +205,12 @@ def adapt_live_model(
     """Background retrain path used by the feedback endpoint.
 
     Keeps the strengthened circuit config but a smaller optimization budget,
-    because this runs inside a worker thread while the API serves scans.
+    because this runs inside a worker thread while the API serves scans. The
+    legitimate counter-example corpus is re-added on every adaptation, otherwise
+    the first feedback-driven retrain would silently undo it and the circuit
+    would go back to scoring real-world site pages as phishing.
     """
+    corpus_urls, corpus_targets = hard_negative_feedback_rows()
 
     train_quantum_model(
         dataset,
@@ -192,8 +221,8 @@ def adapt_live_model(
         shots=QUANTUM_DEFAULT_SHOTS,
         reps=QUANTUM_CIRCUIT_REPS,
         quantum_weight=quantum_weight,
-        feedback_urls=feedback_urls,
-        feedback_targets=feedback_targets,
+        feedback_urls=[*feedback_urls, *corpus_urls],
+        feedback_targets=[*feedback_targets, *corpus_targets],
     )
 
 
@@ -219,33 +248,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hard-negatives",
         type=int,
-        default=0,
+        default=QUANTUM_DEFAULT_HARD_NEGATIVES,
         help=(
             "Append this many legitimately-labelled real-world URLs from "
             "backend.domain_policy to the training pool. The dataset's legitimate "
             "rows are bare HTTPS domains, so without them the circuit learns "
-            "length and subdomain count as pure phishing evidence."
+            "length and subdomain count as pure phishing evidence. 0 disables."
         ),
     )
     return parser.parse_args()
 
 
-def strided_sample(urls: list[str], count: int) -> list[str]:
-    if count <= 0 or count >= len(urls):
-        return list(urls)
-    step = len(urls) / count
-    return [urls[int(index * step)] for index in range(count)]
-
-
 def main() -> None:
     args = parse_args()
-    feedback_urls: list[str] = []
-    if args.hard_negatives:
-        from .domain_policy import legitimate_training_urls
-
-        feedback_urls = strided_sample(
-            legitimate_training_urls(), args.hard_negatives
-        )
+    feedback_urls, feedback_targets = hard_negative_feedback_rows(
+        args.hard_negatives
+    )
     train_quantum_model(
         args.data,
         args.output,
@@ -257,7 +275,7 @@ def main() -> None:
         reps=args.circuit_reps,
         quantum_weight=args.quantum_weight,
         feedback_urls=feedback_urls,
-        feedback_targets=[0] * len(feedback_urls),
+        feedback_targets=feedback_targets,
     )
     print(
         f"Live quantum model written to {args.output} "
