@@ -63,7 +63,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def score(models: dict, quantum, features: pd.DataFrame, urls: list[str]) -> list[dict]:
+def score(
+    models: dict,
+    quantum,
+    features: pd.DataFrame,
+    urls: list[str],
+    threshold: float = THRESHOLD,
+) -> list[dict]:
     rows = []
     for index, url in enumerate(urls):
         row = features.iloc[[index]]
@@ -100,7 +106,7 @@ def score(models: dict, quantum, features: pd.DataFrame, urls: list[str]) -> lis
                 "B": round(float(models["B"].predict_proba(row)[:, 1][0]), 4),
                 "quantum": None if quantum_value is None else round(quantum_value, 4),
                 "trusted_cap": capped,
-                "verdict": "phishing" if probability >= THRESHOLD else "legitimate",
+                "verdict": "phishing" if probability >= threshold else "legitimate",
             }
         )
     return rows

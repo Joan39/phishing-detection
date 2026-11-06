@@ -143,6 +143,9 @@ def train_quantum_model(
                 "maxiter": maxiter,
                 "train_per_class": train_per_class,
                 "extra_rows": int(len(feedback_urls or [])),
+                # Recorded so a held-out benchmark can prove these rows and the
+                # benchmark's test rows never intersect.
+                "fold": int(fold),
             },
         },
         temporary,

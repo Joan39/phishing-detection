@@ -1008,40 +1008,89 @@ def reset_password(request: PasswordResetRequest) -> dict[str, bool]:
     return {"reset": True}
 
 
+def _benchmark_description(benchmark: dict) -> dict:
+    """State what protocol a saved benchmark measured, and whether it is the live one.
+
+    ``results/first_experiment.json`` used to come from a dataset-only, 18-feature run
+    at threshold 0.50. Those numbers describe models nobody serves, so an artifact
+    without ``training_recipe`` is reported as legacy instead of as deployed accuracy.
+    """
+    recipe = benchmark.get("training_recipe")
+    if not isinstance(recipe, dict):
+        return {
+            "protocol": "dataset-only experiment, no legitimate hard-negative corpus",
+            "scope": (
+                f"Legacy fold {benchmark.get('fold')} run without the production "
+                "training recipe - not the deployed models"
+            ),
+            "deployed_recipe": False,
+            "threshold": 0.5,
+            "test_rows": benchmark.get("test_rows"),
+            "generated_at": benchmark.get("generated_at"),
+            "feature_count": len(benchmark.get("features", [])),
+            "realworld": None,
+            "quantum_circuit": {},
+        }
+    return {
+        "protocol": (
+            "URL-only features + legitimate hard-negative corpus, fused with the "
+            "deployed quantum circuit"
+        ),
+        "scope": (
+            f"Domain-held-out fold {benchmark.get('fold')}, "
+            f"{benchmark.get('test_rows', 0):,} unseen rows, threshold "
+            f"{benchmark.get('threshold', 0.5):.2f}"
+        ),
+        "deployed_recipe": True,
+        "threshold": benchmark.get("threshold"),
+        "test_rows": benchmark.get("test_rows"),
+        "generated_at": benchmark.get("generated_at"),
+        "feature_count": benchmark.get("feature_count"),
+        "hard_negative_rows": recipe.get("hard_negative_rows"),
+        "realworld": benchmark.get("realworld"),
+        "quantum_circuit": benchmark.get("quantum_circuit", {}),
+    }
+
+
 @app.get("/api/models/comparison")
 def model_comparison() -> dict:
-    first = _load_json_result("first_experiment.json")
-    quantum = _load_json_result("quantum_ensemble_experiment.json")
-    metrics = first.get("metrics", {})
-    response = {
-        "models": [
-            {
-                "id": "A",
-                "name": "Logistic regression",
-                "type": "classical",
-                "scope": "Full domain-held-out test set",
-                "metrics": metrics.get("A", {}),
-            },
-            {
-                "id": "B",
-                "name": "Soft-voting ensemble",
-                "type": "classical",
-                "scope": "Full domain-held-out test set",
-                "metrics": metrics.get("B", {}),
-            },
-            {
-                "id": "quantum-ensemble",
-                "name": "Classical + quantum ensemble",
-                "type": "hybrid",
-                "scope": "Held-out balanced subset",
-                "metrics": quantum.get("metrics", {}),
-                "component_metrics": quantum.get("component_metrics", {}),
-                "weights": quantum.get("weights", {}),
-                "circuit": quantum.get("circuit", {}),
-                "evaluation_only": False,
-            },
-        ],
-    }
+    benchmark = _load_json_result("first_experiment.json")
+    description = _benchmark_description(benchmark)
+    metrics = benchmark.get("metrics", {})
+    entries = [
+        {
+            "id": identifier,
+            "name": name,
+            "type": kind,
+            "scope": description["scope"],
+            "metrics": values,
+            "deployed_recipe": description["deployed_recipe"],
+        }
+        for identifier, name, kind, values in (
+            ("A", "Logistic regression", "classical", metrics.get("A", {})),
+            ("B", "Soft-voting ensemble", "classical", metrics.get("B", {})),
+            (
+                "classical-ensemble",
+                "Classical ensemble (0.35 A + 0.65 B)",
+                "classical",
+                benchmark.get("classical_ensemble", {}),
+            ),
+            (
+                "quantum",
+                "Quantum circuit alone",
+                "quantum",
+                benchmark.get("quantum_only", {}),
+            ),
+            (
+                "quantum-ensemble",
+                "Classical + quantum ensemble",
+                "hybrid",
+                benchmark.get("hybrid", {}),
+            ),
+        )
+        if values
+    ]
+    response = {"models": entries, "benchmark": description}
     matrix = _optional_json_result("quantum_rl_configuration_experiment.json")
     if matrix is not None:
         response["configuration_matrix"] = {

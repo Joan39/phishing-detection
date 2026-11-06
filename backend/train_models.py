@@ -356,6 +356,12 @@ def feature_separation_audit(
 
 
 def run_experiment(args: argparse.Namespace) -> dict[str, Any]:
+    """Dataset-only ablation over one domain-held-out fold.
+
+    Writes no ``training_recipe``, so the comparison panel reports its output as a
+    legacy run. Use ``scripts.production_benchmark`` for figures that describe the
+    deployed stack.
+    """
     frame, target, groups = load_dataset(args.data)
     feature_frame = build_feature_frame(frame, args.feature_profile)
     features = select_features(feature_frame, args.feature_profile)

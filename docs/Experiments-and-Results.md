@@ -19,28 +19,55 @@ Phishing is the positive class throughout.
 | `scripts/fresh_probe.py` | Second, never-tuned 18-URL set (live and offline) | `results/fresh_probe.json` |
 | `scripts/legit_negative_experiment.py` | Hard-negative corpus configurations, scored on fold + both real-world sets | `results/legit_negative_experiment.json` |
 | `scripts/realworld_offline_score.py` | Score deployed artifacts offline on both real-world sets, hybrid or classical-only | console |
+| `scripts/production_benchmark.py` | Refit the live recipe on a domain-held-out fold and score the full stack; the source of the Model Comparison panel | `results/first_experiment.json` |
 | `scripts/generate_system_report.py` | Rebuild the .docx system report | `reports/…Report.docx` |
 
 Run any of them with `python -m backend.<name> [--output path]`.
 
-## 2. Classical detectors (domain-held-out fold)
+## 2. Deployed stack on domain-held-out rows
 
-Fold protocol: `GroupShuffleSplit` on domain, 10% held out (23,661 rows),
-seed 42; each model is trained on the remaining 90% of PhiUSIIL **plus the
-realistic legitimate hard-negative corpus**, then scored at the 0.5 decision
-point.
+`scripts/production_benchmark.py` produces the only numbers the Model Comparison
+panel shows. Protocol: `StratifiedGroupKFold` (5 splits, seed 42) on registrable
+domain, fold 0 held out — 47,158 rows over 43,817 domains, none of which appear
+in the 175,286 training domains. Models A and B are refit for the benchmark on
+the fold-0 training rows plus the full legitimate hard-negative corpus (7,712
+corpus URLs × 10 and 170 bare HTTP origins × 60 = 87,320 rows; 275,957 rows in
+total), which is the recipe `fit_production_models` applies to the live models;
+`models/` is never written. The quantum column is the deployed artifact, whose
+own training rows are recomputed from its circuit metadata and asserted disjoint
+from the scored rows. Everything is scored through the live path — 0.35/0.65
+classical fusion, 0.75/0.25 hybrid fusion, the trusted-domain cap, and the bandit
+threshold 0.40 — so these are deployment numbers, not a separate research split.
 
-| Model | Accuracy | Precision | Recall | F1 | ROC-AUC |
-| --- | --- | --- | --- | --- | --- |
-| A — logistic regression | 0.9261 | 0.9369 | 0.8825 | 0.9089 | 0.9614 |
-| B — soft-voting ensemble | 0.9909 | 0.9963 | 0.9818 | 0.9890 | 0.9967 |
-| Classical, equal average | 0.9717 | 0.9822 | 0.9495 | 0.9656 | 0.9947 |
-| **Classical, weighted (A 0.35 / B 0.65)** | **0.9884** | **0.9914** | **0.9807** | **0.9860** | **0.9959** |
+| Component | Accuracy | Precision | Recall | F1 | ROC-AUC | Legit FPR |
+| --- | --- | --- | --- | --- | --- | --- |
+| A — logistic regression | 0.8741 | 0.8533 | 0.8526 | 0.8529 | 0.9091 | 0.1098 |
+| B — soft-voting ensemble | 0.9848 | 0.9892 | 0.9751 | 0.9821 | 0.9965 | 0.0079 |
+| Classical, weighted (A 0.35 / B 0.65) | 0.9765 | 0.9731 | 0.9720 | 0.9725 | 0.9937 | 0.0201 |
+| Quantum circuit alone | 0.5737 | 0.5020 | 0.5330 | 0.5170 | 0.5961 | 0.3959 |
+| **Hybrid live (0.75 classical + 0.25 quantum)** | **0.9533** | **0.9255** | **0.9689** | **0.9467** | **0.9895** | **0.0584** |
 
-The weighted row is the live fusion in `backend/main.py`
-(`CLASSICAL_WEIGHTS`, overridable via `QPHISH_CLASSICAL_WEIGHTS`). Weighting
-by held-out strength adds +1.7 accuracy points over equal averaging, mainly by
-curbing model A's false positives.
+At a 0.50 decision point the hybrid row reads 0.9505 accuracy, 0.9405 F1 and
+0.0216 false-positive rate. Three readings follow:
+
+- Model A is the weak link and is down-weighted for exactly that reason; the
+  ensemble carries the classical path.
+- The quantum term costs held-out accuracy (0.9765 → 0.9533, FPR 0.0201 →
+  0.0584) and buys real-world behaviour: corpus training is what removed the
+  0.14 probability floor described in §6.3. On this split it is a diversity and
+  calibration term, not a competitor to B.
+- Held-out numbers are optimistic relative to live traffic: the same stack
+  reaches 0.731 / 0.750 on the two real-world legitimate sets (§6.2) while
+  keeping phishing at 1.000, because ordinary content-shaped URLs are rarer in
+  the corpus than in the wild.
+
+Earlier protocol note: the first benchmark artifact came from
+`backend.train_models.run_experiment`, which trains on dataset rows only with 18
+features (no `IsTrustedRoot`) and scores at 0.50. It reported A 0.9964 and B
+0.9975 — numbers measured on a distribution the deployed models no longer see.
+`/api/models/comparison` now labels any artifact without a `training_recipe`
+block as a legacy run instead of presenting it as deployed accuracy, and
+`scripts.production_benchmark` overwrites it with the table above.
 
 ## 3. Quantum component (live artifact)
 

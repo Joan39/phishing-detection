@@ -60,7 +60,8 @@ The right-hand panel explains the result in detail:
 - **Why this classification** — signal cards for HTTPS usage, IP-address
   hosts, obfuscation (`%40`-style encodings), URL length and subdomain depth,
   unusual special characters, and trusted-domain calibration.
-- **Benchmark performance** — held-out accuracy of the classical models.
+- **Benchmark performance** — held-out accuracy of each detector, from the same
+  production-recipe benchmark shown under Model Comparison.
 
 For a full explanation of how each model reaches its probability — the URL
 features, the classical detectors, the quantum circuit, the hybrid blend and
@@ -115,6 +116,17 @@ The **Model Comparison** view shows how each detector performed on held-out
 domains (accuracy, phishing F1, ROC-AUC), the live hybrid formula, and the
 quantum-weight × threshold-policy experiment matrix. Metrics come from saved
 experiment reports, not from your scans.
+
+The line above the table states which protocol produced them: fold, number of
+unseen rows, training recipe and decision threshold. It is written by
+`python -m scripts.production_benchmark`, which refits the classical models on
+the same recipe the live models use (URL-only features plus the legitimate
+hard-negative corpus) and scores the held-out rows through the live fusion,
+trusted-domain cap and bandit threshold. Below the table, the real-world line
+reports the curated legitimate battery and the never-tuned probe, which are
+consistently lower than the held-out figures. If the saved report predates that
+recipe, the panel labels it a legacy dataset-only run instead of presenting it
+as deployed accuracy.
 
 ---
 

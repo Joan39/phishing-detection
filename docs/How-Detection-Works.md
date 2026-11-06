@@ -43,7 +43,7 @@ P(phishing) = σ(w·x + b)
 
 Because the boundary is linear, A is stable and rarely confidently wrong, but
 it under-uses feature interactions (e.g., "long *and* hyphen-heavy *and* no
-HTTPS together"). On the domain-held-out fold it reaches 0.9261 accuracy.
+HTTPS together"). On the domain-held-out fold it reaches 0.8741 accuracy.
 
 ## 3. Model B — soft-voting ensemble
 
@@ -56,7 +56,7 @@ B wraps three detectors and averages their probabilities with weights 1:2:2:
   remaining errors, the strongest non-linear fitter of the three).
 
 The forest and boosting stages let B capture the "several mediocre signals at
-once" pattern A misses, at 0.9909 held-out accuracy and 0.9967 ROC-AUC.
+once" pattern A misses, at 0.9848 held-out accuracy and 0.9965 ROC-AUC.
 
 **Classical fusion.** A and B are combined as
 `P(classical) = 0.35·A + 0.65·B`. The weights follow the held-out ranking:
@@ -86,7 +86,8 @@ The VQC (`backend/quantum_live.py`) reads four complementary features:
    ~0.56 for all real traffic.
 
 On CPU simulation the VQC is far weaker than the classical side standalone
-(≈0.60 accuracy on held-out domains) — its role is *ensemble diversity*: its
+(0.574 accuracy on held-out domains at the live threshold, 0.609 at 0.50) — its
+role is *ensemble diversity*: its
 errors come from a different hypothesis class, so blending it smooths the
 classical probability rather than duplicating it. What it must not do is act as
 a constant; measured on real-world URLs the corpus-trained circuit separates the

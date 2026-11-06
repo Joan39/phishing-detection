@@ -18,7 +18,8 @@ URL ──> 19 structural features ──> classical ensemble (LR + voting + boo
 
 - **Classical detectors** — logistic regression and a soft-voting ensemble,
   trained on the PhiUSIIL dataset plus a realistic-legitimate hard-negative
-  corpus (phishing F1 up to 0.9945 on held-out domains).
+  corpus. On 47,158 domain-held-out rows the ensemble reaches 0.9725 phishing
+  F1 and the full hybrid stack 0.9467 (`python -m scripts.production_benchmark`).
 - **Quantum detector** — 4-qubit VQC (`ZZFeatureMap` + `RealAmplitudes`,
   512 shots) contributing ensemble diversity to the hybrid score.
 - **Real-world generalization** — a dataset-held-out fold cannot see the failure
