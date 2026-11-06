@@ -117,6 +117,65 @@ class UrlFeatureTests(unittest.TestCase):
             hosts(general_legitimate_training_urls()) & hosts(LEGITIMATE_URLS)
         )
 
+    def test_general_negatives_are_disjoint_from_fresh_probe_hosts(self):
+        from backend.domain_policy import legitimate_training_urls
+        from scripts.fresh_probe import FRESH_LEGITIMATE, FRESH_PHISHING
+        from urllib.parse import urlsplit
+
+        trained = {
+            urlsplit(url).hostname.lower().removeprefix("www.")
+            for url in legitimate_training_urls()
+        }
+        probe = {
+            urlsplit(url).hostname.lower().removeprefix("www.")
+            for url in FRESH_LEGITIMATE + FRESH_PHISHING
+        }
+        # Only the brand roots the trusted-domain cap exists for may coincide.
+        self.assertLessEqual(probe & trained, {"wikipedia.org", "github.com"})
+
+    def test_negatives_cover_urls_longer_than_any_dataset_legitimate_row(self):
+        """PhiUSIIL legitimate rows top out around 39 characters (p99)."""
+        from backend.domain_policy import general_legitimate_training_urls
+        from backend.url_features import extract_url_features_frame
+
+        lengths = extract_url_features_frame(
+            general_legitimate_training_urls()
+        )["URLLength"]
+        self.assertGreater(float((lengths > 50).mean()), 0.2)
+
+    def test_hard_negative_blocks_weight_bare_http_separately(self):
+        from backend.domain_policy import (
+            BARE_HTTP_REPLICAS,
+            HARD_NEGATIVE_REPLICAS,
+            bare_http_origin_training_urls,
+            hard_negative_blocks,
+        )
+
+        blocks = hard_negative_blocks()
+
+        self.assertEqual(
+            [replicas for _, replicas in blocks],
+            [HARD_NEGATIVE_REPLICAS, BARE_HTTP_REPLICAS],
+        )
+        self.assertEqual(
+            blocks[1][0],
+            bare_http_origin_training_urls(),
+            "the uplift block must be exactly the bare origins, no paths",
+        )
+        from urllib.parse import urlsplit
+
+        self.assertTrue(
+            all(urlsplit(url).path in ("", "/") for url in blocks[1][0]),
+            blocks[1][0][:3],
+        )
+
+    def test_disabling_general_hosts_drops_the_bare_http_block(self):
+        from backend.domain_policy import hard_negative_blocks
+
+        blocks = hard_negative_blocks(include_general_hosts=False)
+
+        self.assertEqual(len(blocks), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

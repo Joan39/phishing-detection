@@ -31,9 +31,8 @@ from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_
 from sklearn.model_selection import StratifiedGroupKFold
 
 from backend.domain_policy import (
-    HARD_NEGATIVE_REPLICAS,
+    GENERAL_LEGITIMATE_HOSTS,
     legitimate_training_urls,
-    trusted_root_training_urls,
 )
 from backend.main import CLASSICAL_WEIGHTS
 from backend.train_models import (
@@ -47,6 +46,7 @@ from backend.url_features import (
     extract_url_features_frame,
     trusted_calibration_applies,
 )
+from scripts.fresh_probe import FRESH_LEGITIMATE, FRESH_PHISHING
 from scripts.realworld_battery import LEGITIMATE_URLS, PHISHING_URLS
 
 DEFAULT_OUTPUT = Path("results") / "legit_negative_experiment.json"
@@ -57,14 +57,33 @@ BOOSTING_ITERATIONS = 200
 THRESHOLD = 0.40
 
 CONFIGURATIONS = (
-    {"name": "trusted_only_250", "replicas": HARD_NEGATIVE_REPLICAS, "general": False},
-    {"name": "broad_250", "replicas": HARD_NEGATIVE_REPLICAS, "general": True},
-    {"name": "broad_120", "replicas": 120, "general": True},
-    {"name": "broad_60", "replicas": 60, "general": True},
+    {
+        "name": "extended_paths_bare60",
+        "replicas": 10,
+        "general": True,
+        "bare_http_uplift": 60,
+    },
+    {
+        "name": "extended_paths_bare60_r16",
+        "replicas": 16,
+        "general": True,
+        "bare_http_uplift": 60,
+    },
+    {
+        "name": "extended_paths_bare60_https_only",
+        "replicas": 10,
+        "general": True,
+        "bare_http_uplift": 60,
+        "http_paths": 0,
+    },
 )
 
 BATTERY_URLS = [("legitimate", url) for url in LEGITIMATE_URLS] + [
     ("phishing", url) for url in PHISHING_URLS
+]
+
+PROBE_URLS = [("legitimate", url) for url in FRESH_LEGITIMATE] + [
+    ("phishing", url) for url in FRESH_PHISHING
 ]
 
 
@@ -81,6 +100,7 @@ def load_fold_data() -> dict:
     splitter = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=SEED)
     train_index, test_index = list(splitter.split(feature_frame[features], target, groups))[FOLD]
     battery = _features([url for _, url in BATTERY_URLS])
+    probe = _features([url for _, url in PROBE_URLS])
     return {
         "x_train": feature_frame.iloc[train_index][features].reset_index(drop=True),
         "y_train": target.iloc[train_index].reset_index(drop=True),
@@ -92,6 +112,9 @@ def load_fold_data() -> dict:
         "battery_features": battery[features].reset_index(drop=True),
         "battery_urls": [url for _, url in BATTERY_URLS],
         "battery_groups": [group for group, _ in BATTERY_URLS],
+        "probe_features": probe[features].reset_index(drop=True),
+        "probe_urls": [url for _, url in PROBE_URLS],
+        "probe_groups": [group for group, _ in PROBE_URLS],
         "features": features,
     }
 
@@ -126,6 +149,13 @@ def fold_metrics(
         ),
         "mean_probability_legitimate": round(float(probabilities[legitimate].mean()), 4),
         "mean_probability_phishing": round(float(probabilities[phishing].mean()), 4),
+        "at_0.50": {
+            "accuracy": round(float(accuracy_score(y_test, probabilities >= 0.50)), 4),
+            "f1_phishing": round(float(f1_score(y_test, probabilities >= 0.50)), 4),
+            "legitimate_false_positive_rate": round(
+                float((probabilities[legitimate] >= 0.50).mean()), 4
+            ),
+        },
     }
 
 
@@ -146,20 +176,20 @@ def fuse_scores(scores: dict[str, np.ndarray]) -> np.ndarray:
     ) / total
 
 
-def battery_metrics(models, data: dict) -> dict:
-    features = data["battery_features"]
+def realworld_metrics(models, data: dict, prefix: str) -> dict:
+    features = data[f"{prefix}_features"]
     scores = {
         name: _predict_probabilities(model, features) for name, model in models.items()
     }
     classical = fuse_scores(scores)
     rows = []
-    for index, url in enumerate(data["battery_urls"]):
+    for index, url in enumerate(data[f"{prefix}_urls"]):
         probability = float(classical[index])
         if trusted_calibration_applies(url, features.iloc[[index]]):
             probability = min(probability, TRUSTED_DOMAIN_CAP)
         rows.append(
             {
-                "group": data["battery_groups"][index],
+                "group": data[f"{prefix}_groups"][index],
                 "url": url,
                 "scheme": "http" if url.startswith("http://") else "https",
                 "verdict": "phishing" if probability >= THRESHOLD else "legitimate",
@@ -197,11 +227,21 @@ def run() -> dict:
     print(f"fold data ready in {time.perf_counter() - started:.1f}s", flush=True)
     results = {}
     for config in CONFIGURATIONS:
-        urls = legitimate_training_urls(include_general_hosts=config["general"])
+        urls = legitimate_training_urls(
+            include_general_hosts=config["general"],
+            http_paths_per_host=config.get("http_paths"),
+        )
         negatives = _features(urls)
         negatives = pd.concat([negatives] * config["replicas"], ignore_index=True)[
             data["features"]
         ]
+        uplift = config.get("bare_http_uplift", 0)
+        if uplift:
+            bare = _features(
+                [f"http://{host}" for host in GENERAL_LEGITIMATE_HOSTS]
+                + [f"http://{host}/" for host in GENERAL_LEGITIMATE_HOSTS]
+            )[data["features"]]
+            negatives = pd.concat([negatives] + [bare] * uplift, ignore_index=True)
         x_train = pd.concat([data["x_train"], negatives], ignore_index=True)
         y_train = pd.concat(
             [data["y_train"], pd.Series([0] * len(negatives), dtype=int)],
@@ -231,7 +271,8 @@ def run() -> dict:
             "held_out_fold": fold_metrics(
                 fuse_scores(test_scores), data["y_test"], data["test_schemes"]
             ),
-            "realworld": battery_metrics(fitted, data),
+            "realworld": realworld_metrics(fitted, data, "battery"),
+            "fresh_probe": realworld_metrics(fitted, data, "probe"),
             "per_model": {
                 name: fold_metrics(values, data["y_test"], data["test_schemes"])
                 for name, values in test_scores.items()
@@ -240,7 +281,9 @@ def run() -> dict:
         print(
             f"{config['name']}: fold={results[config['name']]['held_out_fold']['accuracy']} "
             f"legit_battery={results[config['name']]['realworld']['summary']['legitimate']['all']['correct_rate']} "
-            f"phish_battery={results[config['name']]['realworld']['summary']['phishing']['all']['correct_rate']}",
+            f"phish_battery={results[config['name']]['realworld']['summary']['phishing']['all']['correct_rate']} "
+            f"legit_probe={results[config['name']]['fresh_probe']['summary']['legitimate']['all']['correct_rate']} "
+            f"phish_probe={results[config['name']]['fresh_probe']['summary']['phishing']['all']['correct_rate']}",
             flush=True,
         )
     return results
@@ -253,9 +296,12 @@ def main() -> None:
         name: {
             "fold_accuracy": payload["held_out_fold"]["accuracy"],
             "fold_legit_fpr": payload["held_out_fold"]["legitimate_false_positive_rate"],
+            "fold_phish_recall": payload["held_out_fold"]["phishing_recall"],
             "battery_legit": payload["realworld"]["summary"]["legitimate"]["all"]["correct_rate"],
             "battery_legit_http": payload["realworld"]["summary"]["legitimate"]["http"]["correct_rate"],
             "battery_phishing": payload["realworld"]["summary"]["phishing"]["all"]["correct_rate"],
+            "probe_legit": payload["fresh_probe"]["summary"]["legitimate"]["all"]["correct_rate"],
+            "probe_phishing": payload["fresh_probe"]["summary"]["phishing"]["all"]["correct_rate"],
         }
         for name, payload in results.items()
     }, indent=2))

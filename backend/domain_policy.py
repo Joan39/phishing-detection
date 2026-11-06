@@ -70,7 +70,8 @@ HARD_NEGATIVE_HOSTS = (
 # Ordinary legitimate hosts: real organisations that are not brand-targeted
 # enough to belong in the trusted list, but whose URLs users do type. The
 # dataset's legitimate rows never look like these (bare domains, all HTTPS), so
-# without them the system flags any unfamiliar path as phishing.
+# without them the system flags any unfamiliar path as phishing. Mixed TLD
+# families, including hosts whose real traffic still arrives over plain HTTP.
 GENERAL_LEGITIMATE_HOSTS = (
     "www.mozilla.org",
     "developer.mozilla.org",
@@ -103,10 +104,65 @@ GENERAL_LEGITIMATE_HOSTS = (
     "www.debian.org",
     "ubuntu.com",
     "fedoraproject.org",
+    "pytorch.org",
+    "www.tensorflow.org",
+    "scikit-learn.org",
+    "pandas.pydata.org",
+    "numpy.org",
+    "www.docker.com",
+    "code.visualstudio.com",
+    "www.eclipse.org",
+    "www.kernel.org",
+    "lists.debian.org",
+    "www.drupal.org",
+    "www.joomla.org",
+    "moodle.org",
+    "www.wikidata.org",
+    "commons.wikimedia.org",
+    "www.nature.com",
+    "www.cell.com",
+    "journals.aps.org",
+    "link.aps.org",
+    "www.sciencedirect.com",
+    "pmc.ncbi.nlm.nih.gov",
+    "www.cdc.gov",
+    "www.who.int",
+    "ec.europa.eu",
+    "www.bund.de",
+    "data.europa.eu",
+    "www.ons.gov.uk",
+    "www.abs.gov.au",
+    "www.stat.go.jp",
+    "www.insee.fr",
+    "www.scb.se",
+    "www.leibniz-gemeinschaft.de",
+    "www.uni-leiden.nl",
+    "www.kuleuven.be",
+    "www.usp.br",
+    "www.unam.mx",
+    "www.msu.ru",
+    "httpwg.org",
+    "datatracker.ietf.org",
+    "www.fastly.com",
+    "blog.cloudflare.com",
+    "www.stats.gov.cn",
+    "www.osaka-u.ac.jp",
+    "cms.gov",
+    "www.epa.gov",
+    "www.fda.gov",
+    "www.uspto.gov",
+    "www.govinfo.gov",
+    "www.gutenberg.org",
+    "www.librivox.org",
+    "openlibrary.org",
+    "www.mcgill.ca",
+    "www.tandf.co.uk",
+    "brage.unit.no",
 )
 
-# Short, ordinary paths. Kept short because the shapes users actually reach over
-# plain HTTP are simple; long hyphen-heavy paths look like attack hosts.
+# Path shapes that ordinary sites really use. Digit-heavy identifiers, hyphenated
+# slugs and query strings are deliberate: they are the legitimate shapes the
+# corpus cannot teach, because its legitimate rows are bare domains.
 GENERAL_LEGITIMATE_PATHS = (
     "",
     "/",
@@ -114,15 +170,58 @@ GENERAL_LEGITIMATE_PATHS = (
     "/about",
     "/about-us.html",
     "/contact",
-    "/docs/getting-started.pdf",
-    "/news/2026/article",
-    "/products/item-123",
     "/support/faq",
+    "/docs/getting-started.pdf",
+    "/products/item-123",
+    "/abs/2301.05427",
+    "/doi/10.1103/PhysRevLett.121.070501",
+    "/pmc/articles/PMC8421310/",
+    "/questions/12345678/how-to-parse-a-url",
+    "/blog/2026/03/14/how-models-see-urls",
+    "/news/2026/technology/quantum-machine-learning",
+    "/guidance/report-a-phishing-email",
+    "/project/requests/",
+    "/package/django/",
+    "/course/quantum-computing-i/",
+    "/statistics/2026/quarter-1.html",
+    "/record/4421877",
+    "/files/annual-report-2025.pdf",
+    "/catalog/record?id=48213",
+    "/item?id=12345678",
+    "/search?q=quantum+computing&page=2",
+    "/api/v2/status.json?format=compact",
+    "/en/latest/configuration.html",
+    "/de/startseite.html",
+    "/user/84213/profile",
+    "/solution/1000234.html",
+    "/news/2026/03/editors-pick-on-renewable-power",
+    "/science-and-technology/2026-03-14/a-field-guide-to-proteins",
+    "/technology/2026/mar/14/open-source-tools-worth-knowing",
+    "/features/long-read/the-last-good-news-story",
+    "/help/get-started/installation-troubleshooting",
+    "/en/stable/guides/deployment-checklist.html",
+    "/press-room/releases/2026/04/quarterly-results-summary",
+    "/documents/2025/annual-sustainability-report.pdf",
+    "/guides/beginners/how-to-read-a-credential-prompt",
+    "/news-analysis/2026/04/what-the-new-rule-means-for-you",
+    "/articles/research/measurement-of-quantum-noise-2025.pdf",
+    "/learning/path-2/module-7/lesson-3.html",
+    "/news-events/news-releases/2026/04/research-brief-118",
 )
 
-# Each template/host example is repeated this many times in production
-# training so the counter-examples outweigh the bare-domain majority.
-HARD_NEGATIVE_REPLICAS = 250
+# Each legitimate counter-example is repeated this many times in production
+# training. The level comes from scripts/legit_negative_experiment.py: 10
+# repetitions of the broad host/path set recovered most real-world legitimate
+# traffic without letting HTTP lookalike hosts slip under the threshold, while
+# 20 repetitions of the same shapes cost a paypa1-style lookalike.
+HARD_NEGATIVE_REPLICAS = 10
+
+# Bare HTTP origins are weighted harder than the rest of the corpus because the
+# dataset has no HTTP legitimate rows at all. scripts/legit_negative_experiment.py
+# measured the tradeoff: 60 replicas recovered real-world legitimate traffic
+# while holding the held-out fold accuracy and the phishing battery flat; 200
+# replicas bought a little more legitimate traffic but cost fold accuracy.
+BARE_HTTP_REPLICAS = 60
 
 
 def trusted_root_domains() -> frozenset[str]:
@@ -194,21 +293,70 @@ def trusted_root_training_urls() -> list[str]:
     return sorted(urls)
 
 
-def general_legitimate_training_urls() -> list[str]:
-    """Return legitimate counter-examples for ordinary non-brand sites."""
+def general_legitimate_training_urls(
+    http_paths_per_host: int | None = None,
+) -> list[str]:
+    """Return legitimate counter-examples for ordinary non-brand sites.
+
+    ``http_paths_per_host`` controls how many path shapes also get a plain-HTTP
+    variant for every host; the corpus has no HTTP legitimate rows at all, so
+    this is the only place the models can learn that an unencrypted origin is
+    ordinary for some sites rather than proof of phishing.
+    """
+    if http_paths_per_host is None:
+        http_paths_per_host = len(GENERAL_LEGITIMATE_PATHS)
     urls: set[str] = set()
     for host in GENERAL_LEGITIMATE_HOSTS:
         for path in GENERAL_LEGITIMATE_PATHS:
             urls.add(f"https://{host}{path}")
-    for host in GENERAL_LEGITIMATE_HOSTS[: len(GENERAL_LEGITIMATE_HOSTS) // 2]:
-        for path in GENERAL_LEGITIMATE_PATHS[:6]:
+    # Plain HTTP is still ordinary traffic, so every host contributes a bare
+    # HTTP origin plus the requested number of path shapes.
+    for host in GENERAL_LEGITIMATE_HOSTS:
+        urls.update({f"http://{host}", f"http://{host}/"})
+        for path in GENERAL_LEGITIMATE_PATHS[: max(http_paths_per_host, 0)]:
             urls.add(f"http://{host}{path}")
     return sorted(urls)
 
 
-def legitimate_training_urls(include_general_hosts: bool = True) -> list[str]:
+def legitimate_training_urls(
+    include_general_hosts: bool = True,
+    http_paths_per_host: int | None = None,
+) -> list[str]:
     """Return the full legitimate hard-negative URL set used for production."""
     urls = set(trusted_root_training_urls())
     if include_general_hosts:
-        urls.update(general_legitimate_training_urls())
+        urls.update(general_legitimate_training_urls(http_paths_per_host))
     return sorted(urls)
+
+
+def bare_http_origin_training_urls() -> list[str]:
+    """Return the scheme-only counter-examples: ``http://host`` and ``http://host/``.
+
+    These are the shortest legitimate rows the corpus can offer, so a plain-HTTP
+    origin on an unfamiliar host otherwise has nothing to anchor on. They are
+    weighted separately from the wider corpus because their count, not their
+    shape, decides how much HTTP the models tolerate.
+    """
+    return sorted(
+        {f"http://{host}{suffix}" for host in GENERAL_LEGITIMATE_HOSTS for suffix in ("", "/")}
+    )
+
+
+def hard_negative_blocks(
+    include_general_hosts: bool = True,
+    http_paths_per_host: int | None = None,
+) -> list[tuple[list[str], int]]:
+    """Return ``(urls, replicas)`` blocks in the exact production weighting.
+
+    Training and evaluation share this function so a chosen configuration cannot
+    drift from what ``build_production_training_data`` actually fits.
+    """
+    blocks = [
+        (
+            legitimate_training_urls(include_general_hosts, http_paths_per_host),
+            HARD_NEGATIVE_REPLICAS,
+        )
+    ]
+    if include_general_hosts and BARE_HTTP_REPLICAS:
+        blocks.append((bare_http_origin_training_urls(), BARE_HTTP_REPLICAS))
+    return blocks

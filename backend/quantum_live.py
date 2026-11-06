@@ -78,15 +78,18 @@ def train_quantum_model(
     )
     train_indices, _ = splits[fold]
     train_sample = balanced_sample(train_indices, target, train_per_class, seed)
-    scaler = MinMaxScaler(feature_range=(0, np.pi))
-    x_train = scaler.fit_transform(frame.iloc[train_sample][QUANTUM_FEATURES])
+    raw_train = frame.iloc[train_sample][QUANTUM_FEATURES]
     targets = target.iloc[train_sample].to_numpy()
     if feedback_urls and feedback_targets:
-        feedback_frame = extract_url_features_frame(feedback_urls)
-        x_train = np.vstack(
-            [x_train, scaler.transform(feedback_frame[QUANTUM_FEATURES])]
+        # Fit the scaler on the pooled rows: hard-negative URLs are longer than
+        # anything in the dataset, so scaling first would push them out of range.
+        raw_train = pd.concat(
+            [raw_train, extract_url_features_frame(feedback_urls)[QUANTUM_FEATURES]],
+            ignore_index=True,
         )
         targets = np.concatenate([targets, np.asarray(feedback_targets, dtype=int)])
+    scaler = MinMaxScaler(feature_range=(0, np.pi))
+    x_train = scaler.fit_transform(raw_train)
     classifier = _build_classifier(
         maxiter=maxiter,
         shots=shots,
@@ -114,6 +117,7 @@ def train_quantum_model(
                 "shots": shots,
                 "maxiter": maxiter,
                 "train_per_class": train_per_class,
+                "extra_rows": int(len(feedback_urls or [])),
             },
         },
         temporary,
@@ -212,11 +216,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shots", type=int, default=QUANTUM_DEFAULT_SHOTS)
     parser.add_argument("--circuit-reps", type=int, default=QUANTUM_CIRCUIT_REPS)
     parser.add_argument("--quantum-weight", type=float, default=0.25)
+    parser.add_argument(
+        "--hard-negatives",
+        type=int,
+        default=0,
+        help=(
+            "Append this many legitimately-labelled real-world URLs from "
+            "backend.domain_policy to the training pool. The dataset's legitimate "
+            "rows are bare HTTPS domains, so without them the circuit learns "
+            "length and subdomain count as pure phishing evidence."
+        ),
+    )
     return parser.parse_args()
+
+
+def strided_sample(urls: list[str], count: int) -> list[str]:
+    if count <= 0 or count >= len(urls):
+        return list(urls)
+    step = len(urls) / count
+    return [urls[int(index * step)] for index in range(count)]
 
 
 def main() -> None:
     args = parse_args()
+    feedback_urls: list[str] = []
+    if args.hard_negatives:
+        from .domain_policy import legitimate_training_urls
+
+        feedback_urls = strided_sample(
+            legitimate_training_urls(), args.hard_negatives
+        )
     train_quantum_model(
         args.data,
         args.output,
@@ -227,8 +256,13 @@ def main() -> None:
         shots=args.shots,
         reps=args.circuit_reps,
         quantum_weight=args.quantum_weight,
+        feedback_urls=feedback_urls,
+        feedback_targets=[0] * len(feedback_urls),
     )
-    print(f"Live quantum model written to {args.output}")
+    print(
+        f"Live quantum model written to {args.output} "
+        f"(hard negatives: {len(feedback_urls)})"
+    )
 
 
 if __name__ == "__main__":

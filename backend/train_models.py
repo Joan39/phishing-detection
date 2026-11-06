@@ -45,7 +45,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from .domain_policy import HARD_NEGATIVE_REPLICAS, trusted_root_training_urls
+from .domain_policy import hard_negative_blocks
 
 
 DEFAULT_DATASET = Path("original") / "PhiUSIIL_Phishing_URL_Dataset.csv"
@@ -197,15 +197,12 @@ def build_production_training_data(
     """Build full-data production features with explicit legitimate hard negatives."""
     frame, target, _ = load_dataset(path)
     feature_frame = build_feature_frame(frame, "url_raw")
-    hard_negative_urls = trusted_root_training_urls()
-    hard_negative_frame = build_feature_frame(
-        pd.DataFrame({"URL": hard_negative_urls}),
-        "url_raw",
-    )
-    hard_negative_frame = pd.concat(
-        [hard_negative_frame] * HARD_NEGATIVE_REPLICAS,
-        ignore_index=True,
-    )
+    blocks = hard_negative_blocks()
+    negative_frames: list[pd.DataFrame] = []
+    for urls, replicas in blocks:
+        block = build_feature_frame(pd.DataFrame({"URL": urls}), "url_raw")
+        negative_frames.extend([block] * replicas)
+    hard_negative_frame = pd.concat(negative_frames, ignore_index=True)
     feature_frame = pd.concat(
         [feature_frame, hard_negative_frame],
         ignore_index=True,
@@ -244,7 +241,9 @@ def fit_production_models(
     return {
         "rows": len(target),
         "features": len(features),
-        "trusted_root_hard_negatives": len(trusted_root_training_urls()),
+        "legitimate_hard_negative_rows": sum(
+            len(urls) * replicas for urls, replicas in hard_negative_blocks()
+        ),
     }
 
 
