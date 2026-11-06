@@ -46,16 +46,23 @@ curbing model A's false positives.
 
 Configuration: 4 qubits, `ZZFeatureMap` + `RealAmplitudes` (2 reps, 12
 parameters), StatevectorSampler, 512 shots, COBYLA 60 iterations, 1,000
-balanced training rows per class.
+balanced training rows per class — plus, in the deployed artifact, 1,500
+legitimate corpus rows added to that pool.
 
-Held-out accuracy of the deployed live model, before vs after strengthening
-the configuration:
+Held-out accuracy of the live model, before and after strengthening the
+configuration, and after the corpus change:
 
-| Metric | Before (1 rep, 256 shots) | After (2 reps, 512 shots) |
-| --- | --- | --- |
-| Accuracy | 0.548 | 0.634 |
-| F1 (phishing) | 0.515 | 0.550 |
-| ROC-AUC | 0.602 | 0.707 |
+| Metric | Before (1 rep, 256 shots) | After (2 reps, 512 shots) | Corpus-trained (deployed) |
+| --- | --- | --- | --- |
+| Accuracy | 0.548 | 0.634 | 0.596 |
+| F1 (phishing) | 0.515 | 0.550 | 0.512 |
+| ROC-AUC | 0.602 | 0.707 | 0.637 |
+| Real-world AUC (74 URLs) | — | 0.570 | 0.746 |
+
+Held-out numbers are fold-1, 500 balanced rows (`scripts/quantum_live_eval.py`);
+the deployed column is the same circuit trained with 1,500 legitimate
+counter-examples added, which trades dataset-distribution accuracy for
+real-world discrimination (§6.5).
 
 The VQC alone remains far weaker than the classical ensemble; its role is
 ensemble diversity inside the 75/25 blend, not standalone detection.
@@ -147,6 +154,7 @@ The same URLs scored through `POST /api/scans` (classical fusion, 4-qubit VQC at
 | Brand-root corpus only (baseline) | 0.3846 | 0.2500 | — | 1.0000 | — |
 | + 85 hosts × 30 paths × 10 | 0.6923 | 0.5000 | 0.5000 | 1.0000 | 1.0000 |
 | + 44 path shapes, bare HTTP × 60 | 0.7308 | 0.5000 | 0.6667 | 1.0000 | 1.0000 |
+| + quantum retrained on the same corpus | 0.7308 | 0.5000 | 0.7500 | 1.0000 | 1.0000 |
 
 `python -m scripts.realworld_offline_score` reproduces these numbers offline
 from the deployed artifacts, and matched the live server row for row; the gap
@@ -162,6 +170,37 @@ phishing. A 0.25-weight component that outputs ~0.56 for everything adds a
 ~0.14 probability floor to every scan, which is enough to push borderline
 legitimate URLs over the 0.40 threshold — it costs two of twelve probe URLs and
 one of twenty-six battery URLs.
+
+### 6.5 Quantum retraining on the legitimate corpus
+
+`python -m backend.quantum_live --hard-negatives 1500` mixes 1,500 evenly
+sampled legitimate counter-examples into the circuit's training pool (1,000
+balanced dataset rows per class + 1,500 corpus rows, target 0), and
+`backend.quantum_live.adapt_live_model` re-adds them on every
+feedback-triggered retrain so the fix cannot be silently undone. Both the
+circuit configuration and the row count are recorded in the artifact under
+`circuit.extra_rows`.
+
+| Metric | dataset-trained VQC | corpus-trained VQC |
+| --- | --- | --- |
+| Real-world quantum-only AUC (74 URLs) | 0.5702 | 0.7463 |
+| Real-world mean P(phishing), legitimate | 0.562 | 0.410 |
+| Real-world mean P(phishing), phishing | 0.572 | 0.597 |
+| Held-out fold-1 accuracy (500 rows) | 0.6340 | 0.5960 |
+| Held-out fold-1 F1 / ROC-AUC | 0.5504 / 0.7069 | 0.5121 / 0.6370 |
+| Live probe legitimate accuracy | 0.6667 | 0.7500 |
+| Live battery legitimate accuracy | 0.7308 | 0.7308 |
+| Live battery legitimate mean probability | 0.327 | 0.300 |
+| Live phishing accuracy (both sets) | 1.0000 | 1.0000 |
+
+This is a trade, not a free win: the circuit gives up held-out accuracy on the
+dataset's own distribution — where legitimate rows are bare domains, exactly the
+pattern the corpus contradicts — and buys real discrimination on traffic that
+looks like ordinary use. The deployed artifact is the corpus-trained one,
+because the failure it fixes is the one users hit. `en.wikipedia.org/wiki/Main_Page`
+makes the effect concrete: its quantum term fell from 0.586 to 0.211, so it now
+scores 0.221 on its own and no longer depends on the trusted-domain cap to stay
+clear of the threshold.
 
 ### 6.4 Operating point on the real-world sets
 
@@ -186,8 +225,10 @@ experiment holds one domain group out.
 
 ## 7. Limitations
 
-- No demonstrated quantum advantage; the VQC contributes diversity only, and on
-  real-world traffic it currently costs accuracy (§6.3).
+- No demonstrated quantum advantage; the VQC contributes diversity only. Its
+  held-out dataset accuracy (0.596) is below the classical path by design, and
+  the corpus retraining moved it further down there while raising real-world
+  discrimination (§6.5) — the two distributions are not the same problem.
 - Drift is simulated, not observed production traffic.
 - Feedback retraining runs in background worker threads (full production
   budget since November 2026, so live models never silently downsize).

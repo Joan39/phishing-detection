@@ -65,7 +65,9 @@ mtime/size changes, so retraining takes effect without a restart.
   non-uncertain feedback at full production capacity (`trees=200`,
   `boosting_iterations=200`), and the quantum model retrains through
   `backend/quantum_live.py::adapt_live_model`, which keeps the strengthened
-  circuit but uses a reduced optimizer budget. Each path is guarded by a flag
+  circuit but uses a reduced optimizer budget and re-adds the legitimate
+  counter-example corpus to every retrain, so analyst feedback cannot silently
+  undo it. Each path is guarded by a flag
   so concurrent feedback coalesces into one retrain.
 
 ## 4. Training data conventions
@@ -90,6 +92,9 @@ mtime/size changes, so retraining takes effect without a restart.
   `hard_negative_blocks()` is the single source for that weighting: production
   training and `scripts/legit_negative_experiment.py` read the same blocks, so a
   measured configuration cannot drift from a deployed one.
+- The same corpus feeds the quantum path: `quantum_live.hard_negative_feedback_rows`
+  takes an evenly spaced sample (1,500 URLs by default, `--hard-negatives N` to
+  change) and trains them as target 0 alongside the balanced dataset rows.
 - Hosts in the corpus are kept disjoint from the evaluation URLs;
   `tests/test_url_features.py` asserts that both real-world sets have no host in
   common with the training corpus (only the trusted brand roots may coincide).

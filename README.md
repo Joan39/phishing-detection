@@ -24,8 +24,8 @@ URL ──> 19 structural features ──> classical ensemble (LR + voting + boo
 - **Real-world generalization** — a dataset-held-out fold cannot see the failure
   mode that matters in use (PhiUSIIL legitimate rows are nearly all bare
   domains), so two host-disjoint curated sets of 74 URLs are scored as well;
-  legitimate accuracy went from 0.38 to 0.73 through the deployed pipeline
-  while phishing detection stayed at 1.00 on both sets
+  legitimate accuracy went from 0.38 to 0.73 on the battery and 0.50 to 0.75 on
+  the never-tuned probe, with phishing detection held at 1.00 on both
   (`docs/Experiments-and-Results.md` §6).
 - **RL adaptation** — an epsilon-greedy bandit tunes the decision threshold
   (0.30–0.70) from analyst verdicts; under simulated drift it lifts phishing

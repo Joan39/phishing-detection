@@ -79,12 +79,18 @@ The VQC (`backend/quantum_live.py`) reads four complementary features:
 4. **Measurement** — 512 shots on the exact statevector sampler; the fraction
    of `1` outcomes maps to `P(phishing)`.
 5. **Training** — COBYLA optimizes the 12 angles to separate the two classes
-   on balanced URL samples.
+   on 1,000 balanced URL rows per class **plus 1,500 legitimate counter-example
+   rows from the hard-negative corpus**. The corpus rows matter: on the dataset
+   alone the four features teach "long URL with subdomains = phishing", because
+   every legitimate dataset row is a bare domain, and the circuit then answers
+   ~0.56 for all real traffic.
 
 On CPU simulation the VQC is far weaker than the classical side standalone
-(≈0.55–0.63 accuracy) — its role is *ensemble diversity*: its errors come
-from a different hypothesis class, so blending it smooths the classical
-probability rather than duplicating it.
+(≈0.60 accuracy on held-out domains) — its role is *ensemble diversity*: its
+errors come from a different hypothesis class, so blending it smooths the
+classical probability rather than duplicating it. What it must not do is act as
+a constant; measured on real-world URLs the corpus-trained circuit separates the
+two classes at AUC 0.746, where the dataset-trained one managed 0.570.
 
 ## 5. Hybrid fusion
 
@@ -140,21 +146,21 @@ Every labeled correction:
 | Model A | 0.977 | Brand-hyphen pattern + long host dominate the linear model |
 | Model B | 0.979 | Trees agree; the domain is not a trusted root |
 | Classical fusion | 0.978 | 0.35·0.977 + 0.65·0.979 |
-| Quantum VQC | 0.318 | Encoded length/domain/subdomain state leans legitimate |
-| Hybrid | 0.813 | 0.75·0.978 + 0.25·0.318 |
+| Quantum VQC | 0.492 | Encoded length/domain/subdomain state is undecided here |
+| Hybrid | 0.857 | 0.75·0.978 + 0.25·0.492 |
 | Calibration | n/a | Host is a lookalike chain, safeguard does not apply |
-| Threshold | 0.40 (bandit) | 0.813 ≥ 0.40 → **phishing**, risk level *high* |
+| Threshold | 0.40 (bandit) | 0.857 ≥ 0.40 → **phishing**, risk level *high* |
 
-Two legitimate contrasts show what the corpus fix bought.
-`https://en.wikipedia.org/wiki/Main_Page` scores a raw hybrid of 0.315 —
-legitimate, but close to the 0.40 threshold because B (0.308) and the VQC
-(0.586) react to its multi-part path; trusted-domain calibration caps it at
-0.25, giving a safe margin. A non-brand page the cap knows nothing about,
-`https://www.economist.com/science-and-technology/2026-03-14/quantum-advantage`,
-now scores A 0.165, B 0.234, hybrid 0.345 → *legitimate, medium risk*; the same
-URL scored 0.694 and was flagged before the long-path negatives were added. It
-passes on model strength alone, with only 0.055 of margin, which is the honest
-limit of URL morphology on a 68-character dated slug.
+Two legitimate contrasts show how the score is assembled.
+`https://en.wikipedia.org/wiki/Main_Page` gives A 0.069, B 0.308, VQC 0.211 →
+hybrid 0.221, comfortably *legitimate* on its own merit; the 0.25 calibration
+cap is available but no longer what keeps it clear of the threshold.
+`https://www.economist.com/science-and-technology/2026-03-14/quantum-advantage`
+is the harder case: A 0.165, B 0.234, VQC 0.561 → hybrid 0.297,
+*legitimate/medium* with 0.103 of margin. The same URL scored 0.694 and was
+flagged before the long-content negatives existed. It is passed on model
+strength, not on a brand allowlist — which is the honest limit of URL
+morphology on a 68-character dated slug.
 
 ## 10. What the system does *not* claim
 
