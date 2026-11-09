@@ -15,6 +15,7 @@ disjoint from the held-out rows before any hybrid number is reported.
 
 Usage:
     python -m scripts.production_benchmark [--fold 0] [--skip-realworld]
+    python -m scripts.production_benchmark --policy results/adaptive_policy.json --output results/policy_experiment.json
 """
 
 from __future__ import annotations
@@ -41,6 +42,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from backend.domain_policy import hard_negative_blocks, is_trusted_domain_url
 from backend.main import (
     CLASSICAL_WEIGHTS,
+    MAX_REDIRECT_TARGETS,
     QUANTUM_WEIGHT,
     _active_threshold,
     _load_rl_state,
@@ -57,6 +59,7 @@ from backend.train_models import (
 from backend.url_features import (
     TRUSTED_DOMAIN_CAP,
     extract_url_features_frame,
+    redirect_targets,
     trusted_calibration_applies,
 )
 from scripts.realworld_offline_score import SETS, score, summarize
@@ -77,6 +80,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--quantum", type=Path, default=DEFAULT_QUANTUM)
     parser.add_argument("--fold", type=int, default=0, choices=range(5))
+    parser.add_argument(
+        "--policy",
+        type=Path,
+        help=(
+            "Score with the fusion weights in this adaptive policy file instead of the "
+            "documented defaults, so a learned policy can be measured on the same split."
+        ),
+    )
     parser.add_argument(
         "--skip-realworld",
         action="store_true",
@@ -154,12 +165,18 @@ def live_probability(
     quantum: np.ndarray | None,
     urls: list[str],
     features: pd.DataFrame,
+    *,
+    quantum_weight: float = QUANTUM_WEIGHT,
 ) -> np.ndarray:
-    """0.75/0.25 fusion then the trusted-domain cap, exactly as backend.main.scan does."""
+    """Hybrid fusion then the trusted-domain cap, exactly as backend.main.scan does.
+
+    The open-redirect payload step is separate (``redirect_chain_probabilities``)
+    because it needs the models themselves, not just the fused readings.
+    """
     if quantum is None:
         probability = classical.copy()
     else:
-        probability = (1 - QUANTUM_WEIGHT) * classical + QUANTUM_WEIGHT * quantum
+        probability = (1 - quantum_weight) * classical + quantum_weight * quantum
     for index, url in enumerate(urls):
         # is_trusted_domain_url is the first clause of the live predicate, so
         # skipping it here cannot change which rows are capped.
@@ -168,6 +185,43 @@ def live_probability(
         if trusted_calibration_applies(url, features.iloc[[index]]):
             probability[index] = min(probability[index], TRUSTED_DOMAIN_CAP)
     return probability
+
+
+def redirect_chain_probabilities(
+    models: dict,
+    artifact: dict[str, Any] | None,
+    urls: list[str],
+    feature_names: list[str],
+    *,
+    classical_weights: dict[str, float] | None = None,
+    quantum_weight: float = QUANTUM_WEIGHT,
+) -> np.ndarray:
+    """Payload scores for open-redirect parameters, NaN where there is none.
+
+    backend.main.scan scores the foreign URL a redirect parameter jumps to and
+    lets the higher reading win, so the benchmark has to do the same or its
+    numbers stop describing the deployed path.
+    """
+    out = np.full(len(urls), np.nan)
+    pairs = [
+        (index, target)
+        for index, url in enumerate(urls)
+        for target in redirect_targets(url)[:MAX_REDIRECT_TARGETS]
+    ]
+    if not pairs:
+        return out
+    values = extract_url_features_frame([target for _, target in pairs])[feature_names]
+    classical = classical_fusion(models, values, classical_weights)
+    probability = (
+        classical
+        if artifact is None
+        else (1 - quantum_weight) * classical
+        + quantum_weight * quantum_probabilities(artifact, values)
+    )
+    for position, (index, _) in enumerate(pairs):
+        if np.isnan(out[index]) or probability[position] > out[index]:
+            out[index] = probability[position]
+    return out
 
 
 def score_metrics(
@@ -233,15 +287,33 @@ def round_floats(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def classical_fusion(models: dict, features: pd.DataFrame) -> np.ndarray:
+def classical_fusion(
+    models: dict, features: pd.DataFrame, weights: dict[str, float] | None = None
+) -> np.ndarray:
     """Vectorised backend.main.fuse_classical_probabilities over a whole frame."""
     scores = {
         name: np.asarray(model.predict_proba(features)[:, 1], dtype=float)
         for name, model in models.items()
     }
-    weights = {name: CLASSICAL_WEIGHTS.get(name, 1.0) for name in scores}
+    weights = {name: (weights or CLASSICAL_WEIGHTS).get(name, 1.0) for name in scores}
     total = sum(weights.values())
     return sum(weights[name] * scores[name] for name in scores) / total
+
+
+def _policy_weights(path: Path | None) -> dict[str, Any]:
+    """Fusion weights to score with: the policy file's, or the documented defaults."""
+    if path is None:
+        return {
+            "source": "documented defaults",
+            "classical_weights": dict(CLASSICAL_WEIGHTS),
+            "quantum_weight": QUANTUM_WEIGHT,
+        }
+    state = json.loads(path.read_text(encoding="utf-8"))
+    return {
+        "source": str(path),
+        "classical_weights": dict(state.get("classical_weights") or CLASSICAL_WEIGHTS),
+        "quantum_weight": float(state.get("quantum_weight", QUANTUM_WEIGHT)),
+    }
 
 
 def main() -> None:
@@ -308,9 +380,25 @@ def main() -> None:
         name: np.asarray(model.predict_proba(x_test)[:, 1], dtype=float)
         for name, model in models.items()
     }
-    classical = classical_fusion(models, x_test)
+    policy = _policy_weights(args.policy)
+    classical = classical_fusion(models, x_test, policy["classical_weights"])
     quantum_values = quantum_probabilities(artifact, x_test)
-    hybrid = live_probability(classical, quantum_values, test_urls, x_test)
+    hybrid = live_probability(
+        classical, quantum_values, test_urls, x_test, quantum_weight=policy["quantum_weight"]
+    )
+    # np.fmax ignores the NaN entries, so rows without a redirect payload keep
+    # their own reading instead of becoming NaN.
+    hybrid = np.fmax(
+        hybrid,
+        redirect_chain_probabilities(
+            models,
+            artifact,
+            test_urls,
+            features,
+            classical_weights=policy["classical_weights"],
+            quantum_weight=policy["quantum_weight"],
+        ),
+    )
     predict_seconds = time.perf_counter() - stage
 
     report = {
@@ -336,6 +424,7 @@ def main() -> None:
         "features": features,
         "feature_count": len(features),
         "threshold": threshold,
+        "scoring_policy": policy,
         "training_recipe": {
             "hard_negative_blocks": negative_blocks,
             "hard_negative_rows": int(len(negatives)),
@@ -396,7 +485,10 @@ def main() -> None:
         report["realworld"] = realworld
 
     report["quantum_circuit"] = dict(artifact.get("circuit", {}))
-    report["weights"] = {"classical": dict(CLASSICAL_WEIGHTS), "quantum": QUANTUM_WEIGHT}
+    report["weights"] = {
+        "classical": dict(policy["classical_weights"]),
+        "quantum": policy["quantum_weight"],
+    }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix(".tmp")

@@ -82,6 +82,65 @@ class UrlFeatureTests(unittest.TestCase):
             )
         )
 
+    def test_calibration_cap_refuses_an_open_redirect_on_a_brand_host(self):
+        from backend.url_features import trusted_calibration_applies
+
+        jump = "https://www.google.com/url?sa=t&url=https://refund-claim-irs-com/tax"
+        self.assertFalse(
+            trusted_calibration_applies(jump, extract_url_features(jump))
+        )
+
+    def test_redirect_target_extraction(self):
+        from backend.url_features import redirect_targets
+
+        # The two shapes that bypassed the deployed models.
+        self.assertEqual(
+            redirect_targets(
+                "https://www.google.com/url?sa=t&url=https://refund-claim-irs-com/tax"
+            ),
+            ["https://refund-claim-irs-com/tax"],
+        )
+        self.assertEqual(
+            redirect_targets(
+                "https://l.facebook.com.l.php?u=https://secure-appleid-verify.com/login"
+            ),
+            ["https://secure-appleid-verify.com/login"],
+        )
+        # Percent-encoded and protocol-relative payloads are decoded.
+        self.assertEqual(
+            redirect_targets(
+                "https://login.example.test/sso?redirect_uri=https%3A%2F%2Fevil.test%2Fcb"
+            ),
+            ["https://evil.test/cb"],
+        )
+        self.assertEqual(
+            redirect_targets("https://brand.example.test/go?url=//evil.test/x"),
+            ["https://evil.test/x"],
+        )
+
+    def test_same_brand_redirect_is_not_a_payload(self):
+        from backend.url_features import redirect_targets
+
+        self.assertEqual(
+            redirect_targets(
+                "https://accounts.google.com/Login?continue=https://mail.google.com/mail/"
+            ),
+            [],
+        )
+
+    def test_non_url_and_unknown_parameter_values_are_ignored(self):
+        from backend.url_features import redirect_targets
+
+        for url in (
+            "https://www.google.com/search?q=url&btnK=Search",
+            "https://news.ycombinator.com/item?id=1&url=/local/path",
+            "https://brand.example.test/go?url=javascript:alert(1)",
+            "https://brand.example.test/page",
+            "https://brand.example.test/go?next=data:text/html,<script>",
+        ):
+            self.assertEqual(redirect_targets(url), [], url)
+
+
     def test_batch_extraction_matches_row_by_row(self):
         from backend.url_features import extract_url_features_frame
 

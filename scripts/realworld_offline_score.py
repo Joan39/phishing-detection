@@ -6,7 +6,7 @@ the same fusion, trusted-domain cap and threshold, so an artifact swap can be
 measured in seconds instead of minutes and compared with the live run.
 
 Usage:
-    python -m scripts.realworld_offline_score [--quantum PATH]
+    python -m scripts.realworld_offline_score [--quantum PATH] [--policy PATH]
 """
 
 from __future__ import annotations
@@ -19,13 +19,9 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from backend.adaptive_policy import fuse_adaptive, load_policy
 from backend.domain_policy import hard_negative_blocks
-from backend.main import (
-    CLASSICAL_WEIGHTS,
-    QUANTUM_WEIGHT,
-    fuse_classical_probabilities,
-    fuse_hybrid_probability,
-)
+from backend.main import _load_policy, score_redirect_targets
 from backend.quantum_live import QUANTUM_FEATURES, load_quantum_model
 from backend.url_features import (
     TRUSTED_DOMAIN_CAP,
@@ -55,6 +51,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quantum", type=Path, default=DEFAULT_QUANTUM)
     parser.add_argument("--classical-only", action="store_true")
     parser.add_argument(
+        "--policy",
+        type=Path,
+        default=None,
+        help="Score with the weights and per-class thresholds in this policy "
+        "file instead of the live one.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -69,17 +72,20 @@ def score(
     features: pd.DataFrame,
     urls: list[str],
     threshold: float = THRESHOLD,
+    policy: dict | None = None,
 ) -> list[dict]:
+    """Reproduce the live fusion row by row, adaptive weights included."""
+    policy = policy if policy is not None else _load_policy()
+    classical_weights = policy["classical_weights"] or {
+        name: 1.0 for name in models
+    }
     rows = []
     for index, url in enumerate(urls):
         row = features.iloc[[index]]
-        classical = fuse_classical_probabilities(
-            {
-                name: float(model.predict_proba(row)[:, 1][0])
-                for name, model in models.items()
-            },
-            CLASSICAL_WEIGHTS,
-        )
+        component_scores = {
+            name: float(model.predict_proba(row)[:, 1][0])
+            for name, model in models.items()
+        }
         quantum_value = (
             None
             if quantum is None
@@ -89,14 +95,18 @@ def score(
                 ))[0, 1]
             )
         )
-        probability = (
-            classical
-            if quantum_value is None
-            else fuse_hybrid_probability(classical, quantum_value, QUANTUM_WEIGHT)
+        if quantum_value is not None:
+            component_scores["quantum"] = quantum_value
+        probability = fuse_adaptive(
+            component_scores, classical_weights, policy["quantum_weight"]
         )
         capped = trusted_calibration_applies(url, row)
         if capped:
             probability = min(probability, TRUSTED_DOMAIN_CAP)
+        chain = score_redirect_targets(url, models, quantum, policy)
+        target_probability = None if chain is None else chain[1]
+        if target_probability is not None and target_probability > probability:
+            probability = target_probability
         rows.append(
             {
                 "url": url,
@@ -106,6 +116,9 @@ def score(
                 "B": round(float(models["B"].predict_proba(row)[:, 1][0]), 4),
                 "quantum": None if quantum_value is None else round(quantum_value, 4),
                 "trusted_cap": capped,
+                "redirect_target_probability": (
+                    None if target_probability is None else round(target_probability, 4)
+                ),
                 "verdict": "phishing" if probability >= threshold else "legitimate",
             }
         )
@@ -142,9 +155,12 @@ def main() -> None:
         name: joblib.load(args.model_dir / f"model_{name}.joblib") for name in ("A", "B")
     }
     quantum = None if args.classical_only else load_quantum_model(args.quantum)
+    policy = load_policy(args.policy) if args.policy is not None else _load_policy()
     print(
         f"models={args.model_dir} quantum={'off' if quantum is None else args.quantum} "
-        f"classical_weights={CLASSICAL_WEIGHTS} quantum_weight={QUANTUM_WEIGHT} "
+        f"policy={'live' if args.policy is None else args.policy} "
+        f"classical_weights={policy['classical_weights']} "
+        f"quantum_weight={policy['quantum_weight']} "
         f"negatives={sum(len(urls) * replicas for urls, replicas in hard_negative_blocks())} rows"
     )
     report = {}
@@ -170,7 +186,7 @@ def main() -> None:
         urls = [url for _, url in pairs]
         groups = [group for group, _ in pairs]
         features = extract_url_features_frame(urls)
-        rows = score(models, quantum, features, urls)
+        rows = score(models, quantum, features, urls, policy=policy)
         summary = summarize(rows, groups)
         report[name] = {
             "rows": rows,

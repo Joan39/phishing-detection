@@ -39,11 +39,27 @@ from .train_models import (
 from .url_features import (
     TRUSTED_DOMAIN_CAP,
     extract_url_features,
+    redirect_targets,
     trusted_calibration_applies,
 )
 from .quantum_live import (
     adapt_live_model,
     predict_quantum_probability,
+)
+from .adaptive_policy import (
+    THRESHOLD_ACTIONS,
+    choose_threshold,
+    disagreement,
+    fuse_adaptive,
+    load_policy,
+    needs_review,
+    observe_distribution,
+    policy_context,
+    policy_summary,
+    reset_distribution_reference,
+    save_policy,
+    update_component_weights,
+    update_context,
 )
 
 
@@ -84,6 +100,11 @@ MODEL_DIR = Path(os.getenv("QPHISH_MODEL_DIR", ROOT / "models" / "url"))
 RL_STATE_FILE = Path(
     os.getenv("QPHISH_RL_STATE_FILE", ROOT / "results" / "rl_state.json")
 )
+ADAPTIVE_POLICY_FILE = Path(
+    os.getenv(
+        "QPHISH_ADAPTIVE_POLICY_FILE", ROOT / "results" / "adaptive_policy.json"
+    )
+)
 QUANTUM_MODEL_FILE = Path(
     os.getenv("QPHISH_QUANTUM_MODEL_FILE", ROOT / "models" / "quantum_live.joblib")
 )
@@ -122,6 +143,7 @@ def _classical_weights() -> dict[str, float]:
 
 CLASSICAL_WEIGHTS = _classical_weights()
 MODEL_LOCK = threading.Lock()
+POLICY_LOCK = threading.Lock()
 ADAPTATION_LOCK = threading.Lock()
 ADAPTATION_RUNNING = False
 RETRAIN_RUNNING = False
@@ -508,6 +530,12 @@ class ScanResponse(BaseModel):
     explanations: dict[str, bool | int]
     model_scores: dict[str, float] = {}
     decision_threshold: float
+    adaptive_context: str = "https/public"
+    threshold_source: str = "global"
+    component_disagreement: float = 0.0
+    review_recommended: bool = False
+    redirect_target: str | None = None
+    scoring_policy: dict = {}
 
 
 class FeedbackRequest(BaseModel):
@@ -594,6 +622,55 @@ def _save_rl_state(state: dict) -> None:
 
 def _active_threshold(state: dict) -> float:
     return float(state["thresholds"][int(np.argmax(state["q_values"]))])
+
+
+def _load_policy() -> dict:
+    """Live adaptive policy.
+
+    A missing policy file mirrors the documented static blend, so a fresh
+    checkout scores identically to the deployment described in the docs until
+    feedback or drift gives the layer evidence to deviate.
+    """
+    state = load_policy(ADAPTIVE_POLICY_FILE, use_cache=False)
+    if not ADAPTIVE_POLICY_FILE.exists():
+        if CLASSICAL_WEIGHTS:
+            state["classical_weights"] = dict(CLASSICAL_WEIGHTS)
+        state["quantum_weight"] = QUANTUM_WEIGHT
+    return state
+
+
+def _observe_scan(probability: float) -> None:
+    """Push the hybrid score into the label-free drift window."""
+    with POLICY_LOCK:
+        state = load_policy(ADAPTIVE_POLICY_FILE, use_cache=False)
+        observe_distribution(state, probability)
+        save_policy(state, ADAPTIVE_POLICY_FILE)
+
+
+def _stored_model_scores(scan_url: str, user_id: int) -> dict[str, float]:
+    """Per-component scores recorded when the URL was scanned.
+
+    Feedback does not carry them and re-scoring would use models that may
+    already have been refit, so the reading the analyst was shown is the one
+    the component weights learn from.
+    """
+    with _db() as connection:
+        row = connection.execute(
+            "SELECT model_scores FROM scans WHERE user_id=? AND scan_url=?"
+            " ORDER BY id DESC LIMIT 1",
+            (user_id, scan_url),
+        ).fetchone()
+    if row is None or not row["model_scores"]:
+        return {}
+    try:
+        stored = json.loads(row["model_scores"])
+    except json.JSONDecodeError:
+        return {}
+    return {
+        name: float(stored[name])
+        for name in ("A", "B", "quantum")
+        if isinstance(stored.get(name), (int, float))
+    }
 
 
 def _schedule_quantum_adaptation() -> None:
@@ -804,6 +881,7 @@ def health() -> dict[str, bool | str | int | float]:
             db_status = "available"
     except (sqlite3.Error, psycopg.Error):
         scans, feedback_count, db_status = 0, 0, "unavailable"
+    policy = _load_policy()
     return {
         "status": "ok",
         "detection_engine": (
@@ -817,6 +895,10 @@ def health() -> dict[str, bool | str | int | float]:
         "scans": scans,
         "feedback_labels": feedback_count,
         "adaptive_threshold": _active_threshold(_load_rl_state()),
+        "adaptive_policy": (
+            "learned" if ADAPTIVE_POLICY_FILE.exists() else "static_default"
+        ),
+        "score_drift_detected": bool(policy["distribution"].get("drift", False)),
     }
 
 
@@ -852,12 +934,15 @@ def metrics(user: sqlite3.Row = Depends(_current_user)) -> dict[str, object]:
             "FROM feedback WHERE user_id=?",
             (user["id"],),
         ).fetchone()
+    policy = _load_policy()
+    global_threshold = _active_threshold(_load_rl_state())
     return {
         "scans": dict(totals),
         "feedback": dict(feedback_totals),
-        "quantum_weight": QUANTUM_WEIGHT,
-        "classical_weights": CLASSICAL_WEIGHTS,
-        "adaptive_threshold": _active_threshold(_load_rl_state()),
+        "quantum_weight": policy["quantum_weight"],
+        "classical_weights": policy["classical_weights"],
+        "adaptive_threshold": global_threshold,
+        "policy": policy_summary(policy, global_threshold),
     }
 
 
@@ -1099,20 +1184,30 @@ def model_comparison() -> dict:
             "drift": matrix.get("drift"),
             "configurations": matrix.get("configurations", []),
         }
+    policy = _load_policy()
+    global_threshold = _active_threshold(_load_rl_state())
+    quantum_included = QUANTUM_MODEL_FILE.exists()
+    classical_weight = policy["classical_weights"]
     response["final_risk_score"] = {
-        "live_model": "75% classical + 25% quantum interference"
-        if QUANTUM_MODEL_FILE.exists()
-        else "A+B ensemble",
-        "quantum_included": QUANTUM_MODEL_FILE.exists(),
+        "live_model": (
+            f"{round((1 - policy['quantum_weight']) * 100)}% classical + "
+            f"{round(policy['quantum_weight'] * 100)}% quantum interference"
+            if quantum_included
+            else "A+B ensemble"
+        ),
+        "quantum_included": quantum_included,
         "live_fusion": {
-            "quantum_weight": QUANTUM_WEIGHT,
-            "classical_weights": CLASSICAL_WEIGHTS,
-            "decision_threshold": _active_threshold(_load_rl_state()),
+            "quantum_weight": policy["quantum_weight"],
+            "classical_weights": classical_weight,
+            "decision_threshold": global_threshold,
         },
+        "adaptive_policy": policy_summary(policy, global_threshold),
         "reason": (
             "Live URL scoring blends the persisted VQC probability with the "
-            "classical ensemble."
-            if QUANTUM_MODEL_FILE.exists()
+            "classical ensemble using the weights the adaptive policy learned "
+            "from analyst feedback; a policy that has not seen feedback yet "
+            "uses the documented static split."
+            if quantum_included
             else "Quantum live inference model is unavailable."
         ),
     }
@@ -1123,7 +1218,7 @@ def model_comparison() -> dict:
 def feedback(
     request: FeedbackRequest,
     user: sqlite3.Row = Depends(_current_user),
-) -> dict[str, str | bool | int | float | None]:
+) -> dict[str, object]:
     parsed = urlsplit(request.scan_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(
@@ -1189,20 +1284,98 @@ def feedback(
         trained_labels = sum(
             item["analyst_verdict"] != "uncertain" for item in labeled_feedback
         )
-        _schedule_classical_retraining(labeled_feedback)
-        _schedule_quantum_adaptation()
+        policy = load_policy(ADAPTIVE_POLICY_FILE, use_cache=False)
+        feedback_features = extract_url_features(request.scan_url)
+        context = policy_context(
+            is_https=bool(feedback_features["IsHTTPS"].iloc[0]),
+            is_trusted_root=trusted_calibration_applies(
+                request.scan_url, feedback_features
+            ),
+        )
+        context_action = int(
+            np.argmin(np.abs(np.asarray(THRESHOLD_ACTIONS) - observed_threshold))
+        )
+        with POLICY_LOCK:
+            if actual is not None:
+                update_context(policy, context, context_action, reward)
+                component_scores = _stored_model_scores(
+                    request.scan_url, user["id"]
+                )
+                if component_scores:
+                    update_component_weights(
+                        policy,
+                        component_scores,
+                        1 if actual else 0,
+                        request.scan_url,
+                    )
+            drift = bool(policy["distribution"].get("drift"))
+            if drift:
+                reset_distribution_reference(policy)
+            save_policy(policy, ADAPTIVE_POLICY_FILE)
+        # Drift is a label-free trigger: an unseen technique change refits on
+        # the labels already collected instead of waiting for the next one.
+        if trained_labels or drift:
+            _schedule_classical_retraining(labeled_feedback)
+            _schedule_quantum_adaptation()
     return {
         "accepted": True,
         "message": (
             "Feedback accepted; models are retraining in the background."
-            if trained_labels
+            if trained_labels or drift
             else "Feedback accepted; uncertain labels are not used for training."
         ),
         "training_signal": analyst_verdict,
         "trained_feedback_labels": trained_labels,
         "adaptive_threshold": _active_threshold(state),
         "reward": reward,
+        "adaptive_context": context,
+        "context_threshold": choose_threshold(policy, context, active_threshold)[0],
+        "drift_detected": drift,
+        "policy": policy_summary(policy, active_threshold),
     }
+
+
+MAX_REDIRECT_TARGETS = 3
+
+
+def score_redirect_targets(
+    url: str,
+    models: dict[str, object],
+    quantum_model: dict | None,
+    policy: dict,
+) -> tuple[str, float] | None:
+    """Score the payload an open-redirect parameter carries the visitor to.
+
+    The novel-technique bypasses that survived the deployed models were brand
+    hosts whose entire content was a jump: the visible URL is clean and the
+    payload is a domain the detector has never seen. Each foreign target is
+    scored exactly like a submitted URL and its reading is allowed to dominate,
+    which is what the user experiences.
+    """
+    weights = policy["classical_weights"] or {name: 1.0 for name in models}
+    best: tuple[str, float] | None = None
+    for target in redirect_targets(url)[:MAX_REDIRECT_TARGETS]:
+        target_features = extract_url_features(target)
+        scores = {
+            name: float(model.predict_proba(target_features)[:, 1][0])
+            for name, model in models.items()
+        }
+        if quantum_model is None:
+            probability = fuse_adaptive(scores, weights, 0.0)
+        else:
+            probability = fuse_adaptive(
+                scores
+                | {
+                    "quantum": predict_quantum_probability(
+                        quantum_model, target_features
+                    )
+                },
+                weights,
+                policy["quantum_weight"],
+            )
+        if best is None or probability > best[1]:
+            best = (target, probability)
+    return best
 
 
 def fuse_classical_probabilities(
@@ -1242,25 +1415,37 @@ def scan(
     features = extract_url_features(request.url)
     models = _models()
     quantum_model = _quantum_model()
+    policy = _load_policy()
     # The training pipeline defines target 1 as phishing.
     model_scores = {
         name: float(model.predict_proba(features)[:, 1][0])
         for name, model in models.items()
     }
-    classical_probability = fuse_classical_probabilities(
-        model_scores, CLASSICAL_WEIGHTS
-    )
     quantum_probability = predict_quantum_probability(quantum_model, features)
-    probability = fuse_hybrid_probability(
-        classical_probability, quantum_probability, QUANTUM_WEIGHT
+    component_scores = model_scores | {"quantum": quantum_probability}
+    probability = fuse_adaptive(
+        component_scores,
+        policy["classical_weights"] or {name: 1.0 for name in model_scores},
+        policy["quantum_weight"],
     )
     trusted_domain_calibration = trusted_calibration_applies(
         request.url, features
     )
     if trusted_domain_calibration:
         probability = min(probability, TRUSTED_DOMAIN_CAP)
+    redirect_chain = score_redirect_targets(request.url, models, quantum_model, policy)
+    redirect_target = None
+    if redirect_chain is not None and redirect_chain[1] > probability:
+        probability = redirect_chain[1]
+        redirect_target = _redact_url(redirect_chain[0])
+    context = policy_context(
+        is_https=bool(features["IsHTTPS"].iloc[0]),
+        is_trusted_root=trusted_domain_calibration,
+    )
     # Phishing is the positive class (target 1) in all trained models.
-    decision_threshold = _active_threshold(_load_rl_state())
+    decision_threshold, _, used_context = choose_threshold(
+        policy, context, _active_threshold(_load_rl_state())
+    )
     is_phishing = probability >= decision_threshold
     response = ScanResponse(
         url=_redact_url(request.url),
@@ -1276,13 +1461,18 @@ def scan(
             "subdomain_count": int(features["NoOfSubDomain"].iloc[0]),
             "special_character_count": int(features["NoOfOtherSpecialCharsInURL"].iloc[0]),
             "trusted_domain_calibration": trusted_domain_calibration,
+            "open_redirect_chain": redirect_target is not None,
         },
-        model_scores=model_scores
-        | {
-            "quantum": quantum_probability,
-            "hybrid": probability,
-        },
+        model_scores=component_scores | {"hybrid": probability},
         decision_threshold=decision_threshold,
+        adaptive_context=context,
+        threshold_source="context" if used_context else "global",
+        component_disagreement=disagreement(component_scores),
+        review_recommended=needs_review(
+            component_scores, probability, decision_threshold
+        ),
+        redirect_target=redirect_target,
+        scoring_policy=policy_summary(policy, decision_threshold),
     )
     with _db() as connection:
         connection.execute(
@@ -1295,4 +1485,5 @@ def scan(
             ),
         )
     SCAN_COUNT.labels(response.verdict).inc()
+    _observe_scan(response.probability)
     return response
